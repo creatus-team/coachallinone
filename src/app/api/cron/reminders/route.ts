@@ -69,17 +69,36 @@ export async function GET(request: Request) {
             });
         }
 
+        // 🔄 상태 자동 업데이트: pending → active (첫 수업일 도래 시)
+        const statusUpdateRes = await query(`
+            UPDATE users SET status = 'active'
+            WHERE id IN (
+                SELECT u.id FROM users u
+                JOIN sessions s ON u.id = s.user_id
+                WHERE u.status = 'pending' 
+                  AND s.start_date <= CURRENT_DATE
+                  AND s.end_date >= CURRENT_DATE
+            )
+            RETURNING id, name
+        `);
+
+        const activatedUsers = statusUpdateRes.rows;
+        if (activatedUsers.length > 0) {
+            console.log('[Status Auto-Update] pending → active:', activatedUsers.map(u => u.name));
+        }
+
         // Get all active sessions with user and coach info
+        // ✅ 수정: pending과 active 모두 포함 (pending은 첫 수업일 전이지만 리마인더 필요)
         const sessionsRes = await query(`
       SELECT 
         s.*, 
-        u.name as user_name, u.phone as user_phone,
+        u.name as user_name, u.phone as user_phone, u.status as user_status,
         c.name as coach_name, c.phone as coach_phone,
         s.is_renewal
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       JOIN coaches c ON s.coach_id = c.id
-      WHERE u.status = 'active'
+      WHERE u.status IN ('active', 'pending')
         AND s.end_date >= CURRENT_DATE
     `);
 
@@ -87,7 +106,8 @@ export async function GET(request: Request) {
         const results = {
             sent: [] as string[],
             skipped: [] as string[],
-            errors: [] as string[]
+            errors: [] as string[],
+            statusUpdated: activatedUsers.map(u => u.name)
         };
 
         for (const session of sessions) {

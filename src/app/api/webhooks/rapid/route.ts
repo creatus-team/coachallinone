@@ -99,9 +99,66 @@ export async function POST(request: Request) {
 async function handleNewEnrollment(name: string, phone: string, option: string, amount: number) {
     console.log('[New Enrollment]', { name, phone, option, amount });
 
+    // 0-1. 멱등성 체크 (같은 전화번호로 오늘 이미 처리됐으면 무시)
+    const todayStr = new Date().toISOString().split('T')[0];
+    const duplicateCheck = await query(`
+        SELECT id FROM message_logs 
+        WHERE recipient_phone = $1 
+          AND type = 'NEW' 
+          AND DATE(sent_at) = $2
+        LIMIT 1
+    `, [phone, todayStr]);
+
+    if (duplicateCheck.rows.length > 0) {
+        console.log('[Duplicate Webhook Ignored]', { phone, date: todayStr });
+        return NextResponse.json({
+            success: true,
+            message: 'Duplicate webhook ignored',
+            alreadyProcessedToday: true
+        });
+    }
+
+    // 0-2. 활성 세션 체크 (이미 진행 중인 세션이 있으면 관리자 알림)
+    const activeSessionCheck = await query(`
+        SELECT s.id, s.day_of_week, s.start_time, c.name as coach_name
+        FROM sessions s
+        JOIN users u ON s.user_id = u.id
+        JOIN coaches c ON s.coach_id = c.id
+        WHERE u.phone = $1 AND s.end_date >= CURRENT_DATE
+    `, [phone]);
+
+    if (activeSessionCheck.rows.length > 0) {
+        const existing = activeSessionCheck.rows[0];
+
+        // 관리자 알림 로그 기록 (SYSTEM_ALERT 타입)
+        await query(`
+            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+            VALUES ('SYSTEM_ALERT', $1, $2, $3, 'PENDING')
+        `, [name, phone, `[중복결제] 활성 세션 있는 고객이 신규 결제!\n기존: ${existing.coach_name} ${existing.day_of_week} ${existing.start_time}\n신규옵션: ${option}\n⚠️ 수동 처리 필요`]);
+
+        await sendSMS({
+            to: process.env.ADMIN_PHONE!,
+            text: `[중복결제 주의]\n${name} (${phone})\n\n기존 세션 있는데 신규 결제함!\n기존: ${existing.coach_name} ${existing.day_of_week} ${existing.start_time}\n신규: ${option}\n\n관리자 페이지에서 확인 필요`,
+            type: 'ADMIN',
+            recipientName: '관리자'
+        });
+
+        return NextResponse.json({
+            error: 'Active session exists',
+            existingSession: `${existing.coach_name} ${existing.day_of_week} ${existing.start_time}`,
+            requiresManualHandling: true
+        });
+    }
+
     // 1. 옵션 파싱
     const parsed = parseOption(option);
     if (!parsed) {
+        // 관리자 알림 로그
+        await query(`
+            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+            VALUES ('SYSTEM_ALERT', $1, $2, $3, 'PENDING')
+        `, [name, phone, `[파싱오류] 옵션: ${option}`]);
+
         await sendSMS({
             to: process.env.ADMIN_PHONE!,
             text: `[오류] 옵션 파싱 실패\n${name} (${phone})\n옵션: ${option}`,

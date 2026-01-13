@@ -112,7 +112,10 @@ export async function DELETE(request: Request) {
     try {
         // 휴강 기록 조회
         const breakRes = await query(`
-            SELECT * FROM session_breaks WHERE id = $1
+            SELECT sb.*, s.end_date as current_end_date
+            FROM session_breaks sb
+            JOIN sessions s ON sb.session_id = s.id
+            WHERE sb.id = $1
         `, [breakId]);
 
         if (breakRes.rows.length === 0) {
@@ -121,15 +124,29 @@ export async function DELETE(request: Request) {
 
         const breakRecord = breakRes.rows[0];
 
-        // 원래 종료일로 복원
+        // 현재 종료일에서 휴강 주수만큼 빼기 (누적 휴강 고려)
+        const currentEndDate = new Date(breakRecord.current_end_date);
+        const correctedEndDate = addWeeks(currentEndDate, -breakRecord.break_weeks);
+
         await query(`
             UPDATE sessions SET end_date = $1 WHERE id = $2
-        `, [breakRecord.original_end_date, breakRecord.session_id]);
+        `, [correctedEndDate, breakRecord.session_id]);
 
         // 휴강 기록 삭제
         await query(`DELETE FROM session_breaks WHERE id = $1`, [breakId]);
 
-        return NextResponse.json({ success: true, message: '휴강이 취소되었습니다' });
+        console.log('[Break Cancelled]', {
+            sessionId: breakRecord.session_id,
+            removedWeeks: breakRecord.break_weeks,
+            oldEndDate: format(currentEndDate, 'yyyy-MM-dd'),
+            newEndDate: format(correctedEndDate, 'yyyy-MM-dd')
+        });
+
+        return NextResponse.json({
+            success: true,
+            message: '휴강이 취소되었습니다',
+            newEndDate: format(correctedEndDate, 'yyyy-MM-dd')
+        });
 
     } catch (error: any) {
         console.error('[Session Breaks DELETE Error]', error);

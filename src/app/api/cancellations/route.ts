@@ -72,7 +72,10 @@ export async function POST(request: Request) {
             VALUES ($1, $2, $3, $4, true, NOW())
         `, [userId, session.id, reason || '', refundAmount || 0]);
 
-        // 4. 세션 삭제
+        // 4. 휴강 기록 삭제 (연관 데이터 정리)
+        await query(`DELETE FROM session_breaks WHERE session_id = $1`, [session.id]);
+
+        // 5. 세션 삭제
         await query(`DELETE FROM sessions WHERE id = $1`, [session.id]);
 
         // 5. 유저 상태 업데이트
