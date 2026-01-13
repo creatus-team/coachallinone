@@ -21,18 +21,39 @@ interface RapidPayload {
     };
 }
 
-// Parse "[코치/요일/시간]상품명" format
+// Parse option - handles multiple formats:
+// 1. "홍성준/매주/월요일/21:00~21:40" (actual Rapid format)
+// 2. "[코치/요일/시간]상품명" (legacy format)
 function parseOptionInfo(option: string) {
-    const regex = /\[(.+?)\/(.+?)\/(.+?)\](.+)?/;
-    const match = option.match(regex);
-    if (!match) return null;
-    return {
-        coachName: match[1].trim(),
-        dayOfWeek: match[2].trim(),
-        startTime: match[3].trim(),
-        productType: match[4]?.trim() || '',
-    };
+    // Try Rapid format first: "코치이름/매주/요일/시간~끝시간"
+    const rapidRegex = /^(.+?)\/(매주|격주|주간)\/(.+?요일)\/(\d{1,2}:\d{2})(?:~\d{1,2}:\d{2})?$/;
+    const rapidMatch = option.match(rapidRegex);
+    if (rapidMatch) {
+        const dayFull = rapidMatch[3]; // "월요일", "화요일", etc.
+        const dayShort = dayFull.charAt(0); // "월", "화", etc.
+        return {
+            coachName: rapidMatch[1].trim(),
+            dayOfWeek: dayShort,
+            startTime: rapidMatch[4].trim(),
+            productType: option, // Use full option as product type
+        };
+    }
+
+    // Try bracket format: "[코치/요일/시간]상품명"
+    const bracketRegex = /\[(.+?)\/(.+?)\/(.+?)\](.+)?/;
+    const bracketMatch = option.match(bracketRegex);
+    if (bracketMatch) {
+        return {
+            coachName: bracketMatch[1].trim(),
+            dayOfWeek: bracketMatch[2].trim(),
+            startTime: bracketMatch[3].trim(),
+            productType: bracketMatch[4]?.trim() || '',
+        };
+    }
+
+    return null;
 }
+
 
 // Normalize phone number
 function normalizePhone(phone: string): string {
