@@ -9,7 +9,12 @@ export const dynamic = 'force-dynamic';
 async function getStats() {
   // 1. Check DB Connection & Basic Stats
   try {
-    const userCountRes = await query('SELECT COUNT(*) FROM users WHERE status = $1', ['active']);
+    // Active users = users with an ongoing session (start_date <= today <= end_date)
+    // This is the SINGLE SOURCE OF TRUTH for "active" status
+    const userCountRes = await query(`
+      SELECT COUNT(DISTINCT user_id) FROM sessions 
+      WHERE start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE
+    `);
     const logcountRes = await query('SELECT COUNT(*) FROM message_logs WHERE sent_at > CURRENT_DATE');
 
     // Fetch recent logs
