@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { format } from 'date-fns';
 import Link from 'next/link';
+import StatsCard from '@/components/StatsCard';
 
 // Force dynamic rendering to ensure real-time data
 export const dynamic = 'force-dynamic';
@@ -66,6 +67,12 @@ export default async function DashboardPage() {
             className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg text-sm font-medium hover:bg-slate-600 transition-colors"
           >
             👀 현황
+          </Link>
+          <Link
+            href="/stats"
+            className="px-4 py-2 bg-emerald-500/20 text-emerald-300 rounded-lg text-sm font-medium hover:bg-emerald-500/30 transition-colors border border-emerald-500/20"
+          >
+            📊 통계
           </Link>
           <span className={`px-3 py-1 rounded-full text-xs font-bold ${stats.error ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'} border border-white/5`}>
             {stats.error ? '오프라인 🔴' : '정상 🟢'}
@@ -138,17 +145,4 @@ export default async function DashboardPage() {
   );
 }
 
-function StatsCard({ title, value, icon, sub }: { title: string, value: string | number, icon: string, sub?: string }) {
-  return (
-    <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-xl hover:bg-slate-800/70 transition-all group backdrop-blur-sm">
-      <div className="flex justify-between items-start mb-4">
-        <h3 className="text-slate-400 text-sm font-medium">{title}</h3>
-        <span className="text-2xl opacity-50 group-hover:opacity-100 transition-opacity transform group-hover:scale-110">{icon}</span>
-      </div>
-      <div className="flex items-end gap-2">
-        <div className="text-4xl font-bold text-white tracking-tight">{value}</div>
-        {sub && <div className="text-xs text-slate-500 mb-1.5 font-medium">{sub}</div>}
-      </div>
-    </div>
-  );
-}
+
