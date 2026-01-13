@@ -2,13 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { format } from 'date-fns';
+import { format, isAfter, isBefore } from 'date-fns';
 
 interface Student {
     id: number;
     name: string;
     phone: string;
-    status: string;
     product_type: string | null;
     coach_name: string | null;
     day_of_week: string | null;
@@ -18,12 +17,28 @@ interface Student {
     created_at: string;
 }
 
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-    active: { label: '활성', color: 'bg-emerald-500/20 text-emerald-400' },
-    pending: { label: '대기', color: 'bg-amber-500/20 text-amber-400' },
-    completed: { label: '완료', color: 'bg-blue-500/20 text-blue-400' },
-    paused: { label: '일시정지', color: 'bg-slate-500/20 text-slate-400' },
-};
+// 세션 기반 상태 계산 (Single Source of Truth)
+function getSessionStatus(student: Student): { label: string; color: string } {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (!student.start_date || !student.end_date) {
+        return { label: '미배정', color: 'bg-slate-500/20 text-slate-400' };
+    }
+
+    const startDate = new Date(student.start_date);
+    const endDate = new Date(student.end_date);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(0, 0, 0, 0);
+
+    if (isAfter(startDate, today)) {
+        return { label: '대기', color: 'bg-amber-500/20 text-amber-400' };
+    }
+    if (isBefore(endDate, today)) {
+        return { label: '종료', color: 'bg-blue-500/20 text-blue-400' };
+    }
+    return { label: '수강중', color: 'bg-emerald-500/20 text-emerald-400' };
+}
 
 export default function StudentsPage() {
     const [students, setStudents] = useState<Student[]>([]);
@@ -32,10 +47,9 @@ export default function StudentsPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
 
-    // Form states
+    // Form states (이름, 전화번호만 수정 가능)
     const [formName, setFormName] = useState('');
     const [formPhone, setFormPhone] = useState('');
-    const [formStatus, setFormStatus] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
@@ -58,7 +72,7 @@ export default function StudentsPage() {
         fetchStudents();
     }, []);
 
-    // Update student
+    // Update student (이름, 전화번호만)
     const handleUpdate = async (student: Student) => {
         try {
             const res = await fetch('/api/students', {
@@ -68,7 +82,6 @@ export default function StudentsPage() {
                     id: student.id,
                     name: formName || student.name,
                     phone: formPhone || student.phone,
-                    status: formStatus || student.status,
                 }),
             });
             const data = await res.json();
@@ -113,21 +126,30 @@ export default function StudentsPage() {
         setEditingId(student.id);
         setFormName(student.name);
         setFormPhone(student.phone);
-        setFormStatus(student.status);
         setError('');
     };
 
-    // Filter students
+    // Filter students (세션 기반 상태로 필터)
     const filteredStudents = students.filter(student => {
         const matchesSearch = !searchTerm ||
             student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             student.phone.includes(searchTerm) ||
             (student.coach_name && student.coach_name.toLowerCase().includes(searchTerm.toLowerCase()));
 
-        const matchesStatus = filterStatus === 'all' || student.status === filterStatus;
+        const status = getSessionStatus(student);
+        const matchesStatus = filterStatus === 'all' ||
+            (filterStatus === 'active' && status.label === '수강중') ||
+            (filterStatus === 'pending' && status.label === '대기') ||
+            (filterStatus === 'completed' && status.label === '종료') ||
+            (filterStatus === 'unassigned' && status.label === '미배정');
 
         return matchesSearch && matchesStatus;
     });
+
+    // 세션 기반 상태 통계
+    const activeCount = students.filter(s => getSessionStatus(s).label === '수강중').length;
+    const pendingCount = students.filter(s => getSessionStatus(s).label === '대기').length;
+    const completedCount = students.filter(s => getSessionStatus(s).label === '종료').length;
 
     return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-8 font-sans">
@@ -176,30 +198,30 @@ export default function StudentsPage() {
                     className="bg-slate-800 border border-slate-600 rounded-lg px-4 py-2 text-white"
                 >
                     <option value="all">전체 상태</option>
-                    <option value="active">활성</option>
+                    <option value="active">수강중</option>
                     <option value="pending">대기</option>
-                    <option value="completed">완료</option>
-                    <option value="paused">일시정지</option>
+                    <option value="completed">종료</option>
+                    <option value="unassigned">미배정</option>
                 </select>
             </div>
 
-            {/* Stats */}
+            {/* Stats (세션 기반) */}
             <div className="grid grid-cols-4 gap-4 mb-6">
                 <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 text-center">
                     <div className="text-2xl font-bold text-white">{students.length}</div>
                     <div className="text-xs text-slate-400">전체</div>
                 </div>
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
-                    <div className="text-2xl font-bold text-emerald-400">{students.filter(s => s.status === 'active').length}</div>
-                    <div className="text-xs text-slate-400">활성</div>
+                    <div className="text-2xl font-bold text-emerald-400">{activeCount}</div>
+                    <div className="text-xs text-slate-400">수강중</div>
                 </div>
                 <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4 text-center">
-                    <div className="text-2xl font-bold text-amber-400">{students.filter(s => s.status === 'pending').length}</div>
+                    <div className="text-2xl font-bold text-amber-400">{pendingCount}</div>
                     <div className="text-xs text-slate-400">대기</div>
                 </div>
                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 text-center">
-                    <div className="text-2xl font-bold text-blue-400">{students.filter(s => s.status === 'completed').length}</div>
-                    <div className="text-xs text-slate-400">완료</div>
+                    <div className="text-2xl font-bold text-blue-400">{completedCount}</div>
+                    <div className="text-xs text-slate-400">종료</div>
                 </div>
             </div>
 
@@ -221,78 +243,75 @@ export default function StudentsPage() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700">
-                            {filteredStudents.map((student) => (
-                                <tr key={student.id} className="hover:bg-slate-700/30 transition-colors">
-                                    {editingId === student.id ? (
-                                        <>
-                                            <td className="px-6 py-4">
-                                                <input
-                                                    type="text"
-                                                    value={formName}
-                                                    onChange={(e) => setFormName(e.target.value)}
-                                                    className="bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-sm"
-                                                />
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <input
-                                                    type="text"
-                                                    value={formPhone}
-                                                    onChange={(e) => setFormPhone(e.target.value)}
-                                                    className="bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-sm"
-                                                />
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <select
-                                                    value={formStatus}
-                                                    onChange={(e) => setFormStatus(e.target.value)}
-                                                    className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm"
-                                                >
-                                                    <option value="active">활성</option>
-                                                    <option value="pending">대기</option>
-                                                    <option value="completed">완료</option>
-                                                    <option value="paused">일시정지</option>
-                                                </select>
-                                            </td>
-                                            <td className="px-6 py-4 text-slate-400">{student.coach_name || '-'}</td>
-                                            <td className="px-6 py-4 text-slate-400">
-                                                {student.day_of_week && student.start_time
-                                                    ? `${student.day_of_week} ${student.start_time}`
-                                                    : '-'}
-                                            </td>
-                                            <td className="px-6 py-4 text-slate-400">
-                                                {student.end_date ? format(new Date(student.end_date), 'MM/dd') : '-'}
-                                            </td>
-                                            <td className="px-6 py-4 text-right">
-                                                <button onClick={() => handleUpdate(student)} className="text-emerald-400 hover:underline mr-3 text-xs">저장</button>
-                                                <button onClick={() => setEditingId(null)} className="text-slate-400 hover:underline text-xs">취소</button>
-                                            </td>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <td className="px-6 py-4 font-medium text-white">{student.name}</td>
-                                            <td className="px-6 py-4 text-slate-300 font-mono text-xs">{student.phone}</td>
-                                            <td className="px-6 py-4">
-                                                <span className={`px-2 py-1 rounded text-xs font-medium ${STATUS_LABELS[student.status]?.color || 'bg-slate-600 text-slate-300'}`}>
-                                                    {STATUS_LABELS[student.status]?.label || student.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 text-slate-300">{student.coach_name || <span className="text-slate-500">미배정</span>}</td>
-                                            <td className="px-6 py-4 text-slate-300">
-                                                {student.day_of_week && student.start_time
-                                                    ? `${student.day_of_week} ${student.start_time}`
-                                                    : <span className="text-slate-500">-</span>}
-                                            </td>
-                                            <td className="px-6 py-4 text-slate-300">
-                                                {student.end_date ? format(new Date(student.end_date), 'MM/dd') : <span className="text-slate-500">-</span>}
-                                            </td>
-                                            <td className="px-6 py-4 text-right">
-                                                <button onClick={() => startEdit(student)} className="text-blue-400 hover:underline mr-3 text-xs">수정</button>
-                                                <button onClick={() => handleDelete(student)} className="text-red-400 hover:underline text-xs">삭제</button>
-                                            </td>
-                                        </>
-                                    )}
-                                </tr>
-                            ))}
+                            {filteredStudents.map((student) => {
+                                const status = getSessionStatus(student);
+                                return (
+                                    <tr key={student.id} className="hover:bg-slate-700/30 transition-colors">
+                                        {editingId === student.id ? (
+                                            <>
+                                                <td className="px-6 py-4">
+                                                    <input
+                                                        type="text"
+                                                        value={formName}
+                                                        onChange={(e) => setFormName(e.target.value)}
+                                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-sm"
+                                                    />
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <input
+                                                        type="text"
+                                                        value={formPhone}
+                                                        onChange={(e) => setFormPhone(e.target.value)}
+                                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 w-full text-sm"
+                                                    />
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`px-2 py-1 rounded text-xs font-medium ${status.color}`}>
+                                                        {status.label}
+                                                    </span>
+                                                    <span className="text-slate-500 text-xs ml-2">(자동)</span>
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-400">{student.coach_name || '-'}</td>
+                                                <td className="px-6 py-4 text-slate-400">
+                                                    {student.day_of_week && student.start_time
+                                                        ? `${student.day_of_week} ${student.start_time}`
+                                                        : '-'}
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-400">
+                                                    {student.end_date ? format(new Date(student.end_date), 'MM/dd') : '-'}
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <button onClick={() => handleUpdate(student)} className="text-emerald-400 hover:underline mr-3 text-xs">저장</button>
+                                                    <button onClick={() => setEditingId(null)} className="text-slate-400 hover:underline text-xs">취소</button>
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="px-6 py-4 font-medium text-white">{student.name}</td>
+                                                <td className="px-6 py-4 text-slate-300 font-mono text-xs">{student.phone}</td>
+                                                <td className="px-6 py-4">
+                                                    <span className={`px-2 py-1 rounded text-xs font-medium ${status.color}`}>
+                                                        {status.label}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-300">{student.coach_name || <span className="text-slate-500">미배정</span>}</td>
+                                                <td className="px-6 py-4 text-slate-300">
+                                                    {student.day_of_week && student.start_time
+                                                        ? `${student.day_of_week} ${student.start_time}`
+                                                        : <span className="text-slate-500">-</span>}
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-300">
+                                                    {student.end_date ? format(new Date(student.end_date), 'MM/dd') : <span className="text-slate-500">-</span>}
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <button onClick={() => startEdit(student)} className="text-blue-400 hover:underline mr-3 text-xs">수정</button>
+                                                    <button onClick={() => handleDelete(student)} className="text-red-400 hover:underline text-xs">삭제</button>
+                                                </td>
+                                            </>
+                                        )}
+                                    </tr>
+                                );
+                            })}
                             {filteredStudents.length === 0 && (
                                 <tr>
                                     <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
