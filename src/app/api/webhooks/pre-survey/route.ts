@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { sendSMS } from '@/lib/sms';
 
+// Notion DB Link
+const NOTION_DB_LINK = 'https://loat.notion.site/DB-2c434088a27d80a9b159cde35db969cf?source=copy_link';
+
 // Tally Payload Type
 interface TallyField {
     key: string;
@@ -72,12 +75,21 @@ export async function POST(request: Request) {
         }
 
         const { user_name, coach_name, coach_phone } = sessionRes.rows[0];
+        const timestamp = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
 
-        // 3. Send SMS to Coach
+        // 3. Send SMS to Student (Receipt Confirmation)
+        await sendSMS({
+            to: phone,
+            text: `[크리투스] ${user_name || studentName}님, 코칭 사전 설문이 정상적으로 접수되었습니다. (${timestamp})`,
+            type: 'PRE_SURVEY',
+            recipientName: user_name || studentName,
+        });
+
+        // 4. Send SMS to Coach (Submission Alert)
         await sendSMS({
             to: coach_phone,
-            text: `[크리투스] ${user_name || studentName}님이 사전 설문을 작성했습니다.\n첫 수업 준비를 확인해주세요!`,
-            type: 'PRE_SURVEY' as any,
+            text: `[크리투스] ${coach_name} 코치님, ${user_name || studentName}님의 사전 설문이 제출되었습니다.\n확인해주세요!\n\n[피드백 신청 DB]\n${NOTION_DB_LINK}`,
+            type: 'PRE_SURVEY',
             recipientName: coach_name,
         });
 
