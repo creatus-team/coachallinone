@@ -79,6 +79,12 @@ export default async function DashboardPage() {
           >
             📊 통계
           </Link>
+          <Link
+            href="/settlements"
+            className="px-4 py-2 bg-orange-500/20 text-orange-300 rounded-lg text-sm font-medium hover:bg-orange-500/30 transition-colors border border-orange-500/20"
+          >
+            💰 정산
+          </Link>
           <span className={`px-3 py-1 rounded-full text-xs font-bold ${stats.error ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'} border border-white/5`}>
             {stats.error ? '오프라인 🔴' : '정상 🟢'}
           </span>
