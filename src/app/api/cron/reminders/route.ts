@@ -1,47 +1,52 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { sendSMS } from '@/lib/sms';
-import { format, addDays, subDays, isSameDay, parseISO, getDay } from 'date-fns';
+import { format, addDays, subDays, isSameDay, getDay } from 'date-fns';
 import { ko } from 'date-fns/locale';
+
+// 코칭신청서 링크 (원본 GAS에서 사용)
+const SURVEY_LINK = 'https://tally.so/r/81qKPr';
 
 // Day mapping: 일(0), 월(1), 화(2), 수(3), 목(4), 금(5), 토(6)
 const DAY_MAP: Record<string, number> = {
     '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6
 };
 
+const DAY_NAME: Record<string, string> = {
+    '월': '월요일', '화': '화요일', '수': '수요일', '목': '목요일',
+    '금': '금요일', '토': '토요일', '일': '일요일'
+};
+
 // Convert day_of_week (월, 화...) to next occurrence date
-function getNextSessionDate(dayOfWeek: string, fromDate: Date = new Date()): Date {
+function getNextSessionDate(dayOfWeek: string, timeStr: string, fromDate: Date = new Date()): Date {
     const targetDay = DAY_MAP[dayOfWeek];
     if (targetDay === undefined) return fromDate;
 
     const currentDay = getDay(fromDate);
     let daysUntil = targetDay - currentDay;
-    if (daysUntil <= 0) daysUntil += 7; // Next week if today or past
 
-    return addDays(fromDate, daysUntil);
+    // If it's today, check if the time has passed
+    if (daysUntil === 0) {
+        const [h, m] = timeStr.split(':').map(Number);
+        if (fromDate.getHours() > h || (fromDate.getHours() === h && fromDate.getMinutes() >= m)) {
+            daysUntil = 7; // Next week
+        }
+    } else if (daysUntil < 0) {
+        daysUntil += 7;
+    }
+
+    const result = addDays(fromDate, daysUntil);
+    const [h, m] = timeStr.split(':').map(Number);
+    result.setHours(h, m, 0, 0);
+    return result;
 }
 
-// Check if we should send reminder (D-2 or D-1)
-function shouldSendReminder(sessionDate: Date, reminderType: 'D-2' | 'D-1'): boolean {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const targetDate = reminderType === 'D-2'
-        ? subDays(sessionDate, 2)
-        : subDays(sessionDate, 1);
-    targetDate.setHours(0, 0, 0, 0);
-
-    return isSameDay(today, targetDate);
+// Calculate hours until session
+function getHoursUntilSession(sessionDate: Date): number {
+    return (sessionDate.getTime() - Date.now()) / (1000 * 60 * 60);
 }
 
 export async function GET(request: Request) {
-    // Verify cron secret (optional security)
-    const { searchParams } = new URL(request.url);
-    const secret = searchParams.get('secret');
-
-    // Allow manual trigger for testing
-    const isManual = searchParams.get('manual') === 'true';
-
     try {
         // Get all active sessions with user and coach info
         const sessionsRes = await query(`
@@ -64,65 +69,49 @@ export async function GET(request: Request) {
         };
 
         for (const session of sessions) {
-            const sessionDate = getNextSessionDate(session.day_of_week);
-            const sessionDateStr = format(sessionDate, 'M/d(E)', { locale: ko });
+            const sessionDate = getNextSessionDate(session.day_of_week, session.start_time);
+            const diffHours = getHoursUntilSession(sessionDate);
+            const dayStr = DAY_NAME[session.day_of_week] || session.day_of_week;
 
-            // Check D-2
-            if (shouldSendReminder(sessionDate, 'D-2')) {
-                // Send to Coach
+            // ===== D-2 (48시간 전 알림) =====
+            // 원본 GAS: 46 <= diffH <= 50
+            if (diffHours >= 46 && diffHours <= 50) {
                 try {
-                    await sendSMS({
-                        to: session.coach_phone,
-                        text: `[크리투스 D-2] ${session.user_name}님 수업 예정\n📅 ${sessionDateStr} ${session.start_time}\n수업 준비 부탁드려요!`,
-                        type: 'D-2',
-                        recipientName: session.coach_name,
-                    });
-                    results.sent.push(`D-2 코치: ${session.coach_name} (${session.user_name})`);
-                } catch (e: any) {
-                    results.errors.push(`D-2 코치 실패: ${session.coach_name} - ${e.message}`);
-                }
+                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.\n코칭신청서 작성 부탁드려요!\n👉 ${SURVEY_LINK}`;
 
-                // Send to Student
-                try {
                     await sendSMS({
                         to: session.user_phone,
-                        text: `[크리투스 D-2] ${sessionDateStr} ${session.start_time} 수업 예정\n담당: ${session.coach_name} 코치님\n궁금한 점 미리 정리해 주세요! 💪`,
+                        text: msg,
                         type: 'D-2',
                         recipientName: session.user_name,
                     });
-                    results.sent.push(`D-2 수강생: ${session.user_name}`);
+                    results.sent.push(`D-2: ${session.user_name} (${diffHours.toFixed(0)}시간 전)`);
                 } catch (e: any) {
-                    results.errors.push(`D-2 수강생 실패: ${session.user_name} - ${e.message}`);
+                    results.errors.push(`D-2 실패: ${session.user_name} - ${e.message}`);
                 }
             }
 
-            // Check D-1
-            if (shouldSendReminder(sessionDate, 'D-1')) {
-                // Send to Coach
+            // ===== D-1 (30시간 전 마감임박 알림) =====
+            // 원본 GAS: 28 <= diffH <= 32
+            else if (diffHours >= 28 && diffHours <= 32) {
                 try {
-                    await sendSMS({
-                        to: session.coach_phone,
-                        text: `[크리투스 D-1] 내일 ${session.user_name}님 수업!\n📅 ${sessionDateStr} ${session.start_time}\n준비 완료하셨나요? 🔥`,
-                        type: 'D-1',
-                        recipientName: session.coach_name,
-                    });
-                    results.sent.push(`D-1 코치: ${session.coach_name} (${session.user_name})`);
-                } catch (e: any) {
-                    results.errors.push(`D-1 코치 실패: ${session.coach_name} - ${e.message}`);
-                }
+                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다! 만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}\n\n(코칭 24시간 이내 미접수 시 피드백 녹화본 전달 혹은 간이 코칭으로 진행됩니다.)`;
 
-                // Send to Student
-                try {
                     await sendSMS({
                         to: session.user_phone,
-                        text: `[크리투스 D-1] 내일 수업!\n📅 ${sessionDateStr} ${session.start_time}\n${session.coach_name} 코치님과 만나요! 🎯`,
+                        text: msg,
                         type: 'D-1',
                         recipientName: session.user_name,
                     });
-                    results.sent.push(`D-1 수강생: ${session.user_name}`);
+                    results.sent.push(`D-1: ${session.user_name} (${diffHours.toFixed(0)}시간 전)`);
                 } catch (e: any) {
-                    results.errors.push(`D-1 수강생 실패: ${session.user_name} - ${e.message}`);
+                    results.errors.push(`D-1 실패: ${session.user_name} - ${e.message}`);
                 }
+            }
+
+            // Outside of reminder windows
+            else {
+                results.skipped.push(`${session.user_name}: ${diffHours.toFixed(0)}시간 후 수업`);
             }
         }
 
@@ -130,6 +119,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             success: true,
+            timestamp: new Date().toISOString(),
             checkedSessions: sessions.length,
             ...results
         });
