@@ -15,6 +15,8 @@ interface Slot {
     start_time: string;
     is_available: boolean;
     assigned_user_id: number | null;
+    assigned_user_name: string | null;
+    session_end_date: string | null;
 }
 
 const DAYS = ['월', '화', '수', '목', '금', '토', '일'];
@@ -100,24 +102,7 @@ export default function SlotManagePage() {
         }
     };
 
-    const handleToggleAvailable = async (slot: Slot) => {
-        try {
-            const res = await fetch('/api/slots', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: slot.id, isAvailable: !slot.is_available }),
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                fetchData();
-            } else {
-                setError(data.error);
-            }
-        } catch (e: any) {
-            setError(e.message);
-        }
-    };
+    // 상태 토글 제거됨 - 수강생 매칭 시에만 자동 변경
 
     const filteredSlots = selectedCoach
         ? slots.filter(s => s.coach_id === selectedCoach)
@@ -234,15 +219,22 @@ export default function SlotManagePage() {
                                             <td className="px-6 py-4 text-gray-600">{slot.day_of_week}요일</td>
                                             <td className="px-6 py-4 text-gray-600">{slot.start_time}</td>
                                             <td className="px-6 py-4">
-                                                <button
-                                                    onClick={() => handleToggleAvailable(slot)}
-                                                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${slot.is_available
-                                                        ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
-                                                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                                        }`}
-                                                >
-                                                    {slot.is_available ? '✅ 오픈' : '🔒 마감'}
-                                                </button>
+                                                {slot.is_available ? (
+                                                    <span className="px-2.5 py-1 rounded text-xs font-medium bg-emerald-50 text-emerald-600">
+                                                        ✅ 오픈
+                                                    </span>
+                                                ) : (
+                                                    <div>
+                                                        <span className="px-2.5 py-1 rounded text-xs font-medium bg-red-50 text-red-600">
+                                                            🔴 {slot.assigned_user_name || '마감'}
+                                                        </span>
+                                                        {slot.session_end_date && (
+                                                            <span className="ml-2 text-xs text-gray-400">
+                                                                ~{new Date(slot.session_end_date).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <button

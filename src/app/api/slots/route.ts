@@ -8,9 +8,15 @@ export async function GET(request: Request) {
         const coachId = searchParams.get('coachId');
 
         let sql = `
-      SELECT cs.*, c.name as coach_name
+      SELECT 
+        cs.*, 
+        c.name as coach_name,
+        u.name as assigned_user_name,
+        s.end_date as session_end_date
       FROM coach_slots cs
       JOIN coaches c ON cs.coach_id = c.id
+      LEFT JOIN users u ON cs.assigned_user_id = u.id
+      LEFT JOIN sessions s ON s.user_id = u.id AND s.coach_id = cs.coach_id AND s.day_of_week = cs.day_of_week
     `;
         const params: any[] = [];
 

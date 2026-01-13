@@ -12,9 +12,8 @@ interface NavItem {
 const navItems: NavItem[] = [
     { href: '/', label: '홈', icon: '🏠' },
     { href: '/students', label: '수강생', icon: '👥' },
-    { href: '/coaches/manage', label: '코치', icon: '🧢' },
+    { href: '/coaches', label: '코치', icon: '🧢' },
     { href: '/slots', label: '슬롯', icon: '⏰' },
-    { href: '/coaches', label: '현황', icon: '👀' },
     { href: '/messages', label: '문자', icon: '✉️' },
     { href: '/stats', label: '통계', icon: '📊' },
     { href: '/settlements', label: '정산', icon: '💰' },
