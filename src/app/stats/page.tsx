@@ -188,9 +188,9 @@ export default function StatsPage() {
                     <div className="text-2xl font-bold text-purple-600">{data.reduce((a, b) => a + b.renewal, 0)}명</div>
                 </div>
                 <div className="bg-white rounded-lg border border-gray-200 p-4">
-                    <div className="text-gray-500 text-xs mb-1">평균 활성 수</div>
+                    <div className="text-gray-500 text-xs mb-1">현재 활성 수</div>
                     <div className="text-2xl font-bold text-emerald-600">
-                        {Math.round(data.reduce((a, b) => a + b.active, 0) / (data.length || 1))}명
+                        {data.length > 0 ? data[data.length - 1].active : 0}명
                     </div>
                 </div>
                 <div className="bg-white rounded-lg border border-gray-200 p-4">
