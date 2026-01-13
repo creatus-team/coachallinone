@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { sendSMS } from '@/lib/sms';
-import { format, addDays, subDays, isSameDay, getDay } from 'date-fns';
-import { ko } from 'date-fns/locale';
+import { addDays, getDay, differenceInDays } from 'date-fns';
 
-// 코칭신청서 링크 (원본 GAS에서 사용)
+// 코칭신청서 링크
 const SURVEY_LINK = 'https://tally.so/r/81qKPr';
 
-// Day mapping: 일(0), 월(1), 화(2), 수(3), 목(4), 금(5), 토(6)
+// 발송 허용 시간대 (오전 9시 ~ 오후 9시)
+const SEND_START_HOUR = 9;
+const SEND_END_HOUR = 21;
+
 const DAY_MAP: Record<string, number> = {
     '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6
 };
@@ -17,7 +19,7 @@ const DAY_NAME: Record<string, string> = {
     '금': '금요일', '토': '토요일', '일': '일요일'
 };
 
-// Convert day_of_week (월, 화...) to next occurrence date
+// Calculate next session date
 function getNextSessionDate(dayOfWeek: string, timeStr: string, fromDate: Date = new Date()): Date {
     const targetDay = DAY_MAP[dayOfWeek];
     if (targetDay === undefined) return fromDate;
@@ -25,11 +27,10 @@ function getNextSessionDate(dayOfWeek: string, timeStr: string, fromDate: Date =
     const currentDay = getDay(fromDate);
     let daysUntil = targetDay - currentDay;
 
-    // If it's today, check if the time has passed
     if (daysUntil === 0) {
         const [h, m] = timeStr.split(':').map(Number);
         if (fromDate.getHours() > h || (fromDate.getHours() === h && fromDate.getMinutes() >= m)) {
-            daysUntil = 7; // Next week
+            daysUntil = 7;
         }
     } else if (daysUntil < 0) {
         daysUntil += 7;
@@ -46,14 +47,35 @@ function getHoursUntilSession(sessionDate: Date): number {
     return (sessionDate.getTime() - Date.now()) / (1000 * 60 * 60);
 }
 
+// Calculate current week number (1주차, 2주차...)
+function getCurrentWeek(startDate: Date): number {
+    const now = new Date();
+    const daysDiff = differenceInDays(now, startDate);
+    return Math.floor(daysDiff / 7) + 1;
+}
+
 export async function GET(request: Request) {
     try {
+        const now = new Date();
+        const currentHour = now.getHours();
+
+        // 🔒 시간대 체크: 9시~21시 사이에만 발송
+        if (currentHour < SEND_START_HOUR || currentHour >= SEND_END_HOUR) {
+            return NextResponse.json({
+                success: true,
+                skipped: true,
+                reason: `발송 시간대 외 (현재: ${currentHour}시, 허용: ${SEND_START_HOUR}~${SEND_END_HOUR}시)`,
+                timestamp: now.toISOString()
+            });
+        }
+
         // Get all active sessions with user and coach info
         const sessionsRes = await query(`
       SELECT 
         s.*, 
         u.name as user_name, u.phone as user_phone,
-        c.name as coach_name, c.phone as coach_phone
+        c.name as coach_name, c.phone as coach_phone,
+        s.is_renewal
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       JOIN coaches c ON s.coach_id = c.id
@@ -73,11 +95,20 @@ export async function GET(request: Request) {
             const diffHours = getHoursUntilSession(sessionDate);
             const dayStr = DAY_NAME[session.day_of_week] || session.day_of_week;
 
+            // 📅 현재 주차 계산
+            const currentWeek = getCurrentWeek(new Date(session.start_date));
+
+            // 📋 발송 조건: 2주차부터 (재결제는 1주차부터)
+            const minWeek = session.is_renewal ? 1 : 2;
+            if (currentWeek < minWeek) {
+                results.skipped.push(`${session.user_name}: ${currentWeek}주차 (${minWeek}주차부터 발송)`);
+                continue;
+            }
+
             // ===== D-2 (48시간 전 알림) =====
-            // 원본 GAS: 46 <= diffH <= 50
             if (diffHours >= 46 && diffHours <= 50) {
                 try {
-                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.\n코칭신청서 작성 부탁드려요!\n👉 ${SURVEY_LINK}`;
+                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.\n만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}`;
 
                     await sendSMS({
                         to: session.user_phone,
@@ -85,17 +116,16 @@ export async function GET(request: Request) {
                         type: 'D-2',
                         recipientName: session.user_name,
                     });
-                    results.sent.push(`D-2: ${session.user_name} (${diffHours.toFixed(0)}시간 전)`);
+                    results.sent.push(`D-2: ${session.user_name} (${currentWeek}주차, ${diffHours.toFixed(0)}시간 전)`);
                 } catch (e: any) {
                     results.errors.push(`D-2 실패: ${session.user_name} - ${e.message}`);
                 }
             }
 
             // ===== D-1 (30시간 전 마감임박 알림) =====
-            // 원본 GAS: 28 <= diffH <= 32
             else if (diffHours >= 28 && diffHours <= 32) {
                 try {
-                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다! 만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}\n\n(코칭 24시간 이내 미접수 시 피드백 녹화본 전달 혹은 간이 코칭으로 진행됩니다.)`;
+                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다! 만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}\n\n(코칭 24시간 이내 미접수 시 대체 코칭 진행)`;
 
                     await sendSMS({
                         to: session.user_phone,
@@ -103,13 +133,12 @@ export async function GET(request: Request) {
                         type: 'D-1',
                         recipientName: session.user_name,
                     });
-                    results.sent.push(`D-1: ${session.user_name} (${diffHours.toFixed(0)}시간 전)`);
+                    results.sent.push(`D-1: ${session.user_name} (${currentWeek}주차, ${diffHours.toFixed(0)}시간 전)`);
                 } catch (e: any) {
                     results.errors.push(`D-1 실패: ${session.user_name} - ${e.message}`);
                 }
             }
 
-            // Outside of reminder windows
             else {
                 results.skipped.push(`${session.user_name}: ${diffHours.toFixed(0)}시간 후 수업`);
             }
@@ -119,7 +148,8 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             success: true,
-            timestamp: new Date().toISOString(),
+            timestamp: now.toISOString(),
+            currentHour,
             checkedSessions: sessions.length,
             ...results
         });
