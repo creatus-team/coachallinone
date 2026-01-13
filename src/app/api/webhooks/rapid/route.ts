@@ -165,21 +165,21 @@ async function handleNewPayment(
     // 6. Send SMS Notifications
     const startDateStr = format(startDate, 'M/d(E)');
 
-    // To Coach
-    await sendSMS({
-        to: coach.phone,
-        text: `[크리투스] 새 수강생 배정!\n이름: ${name}\n수업: ${info.dayOfWeek} ${info.startTime}\n시작일: ${startDateStr}`,
-        type: 'NEW',
-        recipientName: coach.name,
-    });
+    // To Coach (Disabled per user request)
+    // await sendSMS({
+    //     to: coach.phone,
+    //     text: `[크리투스] 새 수강생 배정!\n이름: ${name}\n수업: ${info.dayOfWeek} ${info.startTime}\n시작일: ${startDateStr}`,
+    //     type: 'NEW',
+    //     recipientName: coach.name,
+    // });
 
-    // To Student
-    await sendSMS({
-        to: phone,
-        text: `[크리투스] 코칭 배정 완료!\n담당: ${coach.name} 코치님\n첫 수업: ${startDateStr} ${info.startTime}\n오픈톡: ${coach.open_chat_link || '(링크 준비중)'}`,
-        type: 'NEW',
-        recipientName: name,
-    });
+    // To Student (Disabled per user request)
+    // await sendSMS({
+    //     to: phone,
+    //     text: `[크리투스] 코칭 배정 완료!\n담당: ${coach.name} 코치님\n첫 수업: ${startDateStr} ${info.startTime}\n오픈톡: ${coach.open_chat_link || '(링크 준비중)'}`,
+    //     type: 'NEW',
+    //     recipientName: name,
+    // });
 
     // To Admin
     await notifyAdmin(`[매칭완료] ${name} → ${coach.name} / ${info.dayOfWeek} ${info.startTime}`);
@@ -222,19 +222,20 @@ async function handleRenewal(name: string, phone: string) {
     const endDateStr = format(newEndDate, 'M/d');
 
     // 4. Send SMS Notifications
-    await sendSMS({
-        to: session.coach_phone,
-        text: `[크리투스] ${name}님 재등록! +6주 연장 (종료: ${endDateStr})`,
-        type: 'RENEWAL',
-        recipientName: session.coach_name,
-    });
+    // (Disabled per user request - Rapid handles it)
+    // await sendSMS({
+    //     to: session.coach_phone,
+    //     text: `[크리투스] ${name}님 재등록! +6주 연장 (종료: ${endDateStr})`,
+    //     type: 'RENEWAL',
+    //     recipientName: session.coach_name,
+    // });
 
-    await sendSMS({
-        to: phone,
-        text: `[크리투스] 재등록 감사합니다!\n${session.coach_name} 코치님과 계속됩니다 💪\n종료일: ${endDateStr}`,
-        type: 'RENEWAL',
-        recipientName: name,
-    });
+    // await sendSMS({
+    //     to: phone,
+    //     text: `[크리투스] 재등록 감사합니다!\n${session.coach_name} 코치님과 계속됩니다 💪\n종료일: ${endDateStr}`,
+    //     type: 'RENEWAL',
+    //     recipientName: name,
+    // });
 
     await notifyAdmin(`[재등록] ${name} → ${session.coach_name} / 종료: ${endDateStr}`);
 
