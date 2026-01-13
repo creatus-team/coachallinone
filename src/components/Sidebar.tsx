@@ -15,6 +15,7 @@ const navItems: NavItem[] = [
     { href: '/coaches/manage', label: '코치', icon: '🧢' },
     { href: '/slots', label: '슬롯', icon: '⏰' },
     { href: '/coaches', label: '현황', icon: '👀' },
+    { href: '/messages', label: '문자', icon: '✉️' },
     { href: '/stats', label: '통계', icon: '📊' },
     { href: '/settlements', label: '정산', icon: '💰' },
 ];
@@ -46,8 +47,8 @@ export default function Sidebar() {
                                 <Link
                                     href={item.href}
                                     className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
-                                            ? 'bg-emerald-50 text-emerald-600'
-                                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                                        ? 'bg-emerald-50 text-emerald-600'
+                                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                                         }`}
                                 >
                                     <span className="text-base">{item.icon}</span>
