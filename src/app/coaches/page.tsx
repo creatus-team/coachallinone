@@ -43,7 +43,7 @@ async function getCoachesWithSlots() {
         };
     } catch (e: any) {
         console.error('DB Error:', e);
-        return { coaches: [], slotsByCoach: {}, error: e.message };
+        return { coaches: [], slotsByCoach: {} as Record<number, any[]>, error: e.message };
     }
 }
 
@@ -101,14 +101,14 @@ export default async function CoachesPage() {
                         {/* Slots List */}
                         <div className="p-4">
                             <h3 className="text-sm font-medium text-slate-400 mb-3">오픈 슬롯</h3>
-                            {slotsByCoach[coach.id]?.length > 0 ? (
+                            {(slotsByCoach[coach.id as number] || []).length > 0 ? (
                                 <div className="space-y-2">
-                                    {slotsByCoach[coach.id].map((slot: any) => (
+                                    {(slotsByCoach[coach.id as number] || []).map((slot: any) => (
                                         <div
                                             key={slot.id}
                                             className={`flex justify-between items-center p-3 rounded-lg ${slot.is_available
-                                                    ? 'bg-emerald-500/10 border border-emerald-500/20'
-                                                    : 'bg-slate-700/50 border border-slate-600'
+                                                ? 'bg-emerald-500/10 border border-emerald-500/20'
+                                                : 'bg-slate-700/50 border border-slate-600'
                                                 }`}
                                         >
                                             <div className="flex items-center gap-3">
@@ -125,8 +125,8 @@ export default async function CoachesPage() {
                                                 </div>
                                             </div>
                                             <span className={`px-2 py-1 rounded text-xs font-medium ${slot.is_available
-                                                    ? 'bg-emerald-500/20 text-emerald-400'
-                                                    : 'bg-slate-600 text-slate-300'
+                                                ? 'bg-emerald-500/20 text-emerald-400'
+                                                : 'bg-slate-600 text-slate-300'
                                                 }`}>
                                                 {slot.is_available ? '배정 가능' : '배정됨'}
                                             </span>
