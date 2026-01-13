@@ -14,6 +14,7 @@ interface Student {
     start_date: string | null;
     end_date: string | null;
     created_at: string;
+    session_id?: number;
 }
 
 function getSessionStatus(student: Student): { label: string; color: string } {
@@ -49,6 +50,12 @@ export default function StudentsPage() {
     const [formPhone, setFormPhone] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+
+    // 휴강 모달 상태
+    const [breakModalOpen, setBreakModalOpen] = useState(false);
+    const [breakStudent, setBreakStudent] = useState<Student | null>(null);
+    const [breakWeeks, setBreakWeeks] = useState(1);
+    const [breakReason, setBreakReason] = useState('');
 
     const fetchStudents = async () => {
         try {
@@ -115,11 +122,82 @@ export default function StudentsPage() {
         }
     };
 
+    // 휴강 처리
+    const handleBreak = async () => {
+        if (!breakStudent?.session_id) {
+            setError('세션 정보가 없어 휴강 처리할 수 없습니다');
+            setBreakModalOpen(false);
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/breaks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: breakStudent.session_id,
+                    breakWeeks,
+                    reason: breakReason
+                }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                setSuccess(`${breakStudent.name} ${breakWeeks}주 휴강 처리 완료! (종료일: ${data.newEndDate})`);
+                setBreakModalOpen(false);
+                setBreakStudent(null);
+                setBreakWeeks(1);
+                setBreakReason('');
+                fetchStudents();
+                setTimeout(() => setSuccess(''), 5000);
+            } else {
+                setError(data.error);
+            }
+        } catch (e: any) {
+            setError(e.message);
+        }
+    };
+
+    // 취소 처리 (매칭 해제)
+    const handleCancel = async (student: Student) => {
+        const reason = prompt(`${student.name} 수강생의 매칭을 취소합니다.\n취소 사유를 입력하세요:`);
+        if (reason === null) return;
+
+        try {
+            const res = await fetch('/api/cancellations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId: student.id,
+                    reason
+                }),
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                setSuccess(`${student.name} 매칭 취소 완료! (슬롯 복구됨: ${data.slotRestored})`);
+                fetchStudents();
+                setTimeout(() => setSuccess(''), 5000);
+            } else {
+                setError(data.error);
+            }
+        } catch (e: any) {
+            setError(e.message);
+        }
+    };
+
     const startEdit = (student: Student) => {
         setEditingId(student.id);
         setFormName(student.name);
         setFormPhone(student.phone);
         setError('');
+    };
+
+    const openBreakModal = (student: Student) => {
+        setBreakStudent(student);
+        setBreakWeeks(1);
+        setBreakReason('');
+        setBreakModalOpen(true);
     };
 
     const filteredStudents = students.filter(student => {
@@ -144,6 +222,55 @@ export default function StudentsPage() {
 
     return (
         <div className="p-8">
+            {/* 휴강 모달 */}
+            {breakModalOpen && breakStudent && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 w-full max-w-md">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4">휴강 신청</h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            <strong>{breakStudent.name}</strong> 수강생의 휴강을 신청합니다.
+                        </p>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm text-gray-600 mb-1">휴강 기간</label>
+                                <select
+                                    value={breakWeeks}
+                                    onChange={(e) => setBreakWeeks(parseInt(e.target.value))}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                >
+                                    <option value={1}>1주</option>
+                                    <option value={2}>2주</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm text-gray-600 mb-1">사유</label>
+                                <input
+                                    type="text"
+                                    value={breakReason}
+                                    onChange={(e) => setBreakReason(e.target.value)}
+                                    placeholder="예: 가족 행사, 개인 사정"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex gap-2 mt-6">
+                            <button
+                                onClick={handleBreak}
+                                className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+                            >
+                                휴강 신청
+                            </button>
+                            <button
+                                onClick={() => setBreakModalOpen(false)}
+                                className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200"
+                            >
+                                취소
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <header className="mb-6 flex justify-between items-center">
                 <div>
@@ -230,6 +357,7 @@ export default function StudentsPage() {
                         <tbody className="divide-y divide-gray-50">
                             {filteredStudents.map((student) => {
                                 const status = getSessionStatus(student);
+                                const isActive = status.label === '회차 진행 중';
                                 return (
                                     <tr key={student.id} className="hover:bg-gray-50 transition-colors">
                                         {editingId === student.id ? (
@@ -239,7 +367,7 @@ export default function StudentsPage() {
                                                         type="text"
                                                         value={formName}
                                                         onChange={(e) => setFormName(e.target.value)}
-                                                        className="border border-gray-200 rounded px-2 py-1 w-full text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                                        className="border border-gray-200 rounded px-2 py-1 w-full text-sm"
                                                     />
                                                 </td>
                                                 <td className="px-6 py-4">
@@ -247,7 +375,7 @@ export default function StudentsPage() {
                                                         type="text"
                                                         value={formPhone}
                                                         onChange={(e) => setFormPhone(e.target.value)}
-                                                        className="border border-gray-200 rounded px-2 py-1 w-full text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                                        className="border border-gray-200 rounded px-2 py-1 w-full text-sm"
                                                     />
                                                 </td>
                                                 <td className="px-6 py-4 text-gray-500">{student.coach_name || '-'}</td>
@@ -296,8 +424,24 @@ export default function StudentsPage() {
                                                 <td className="px-6 py-4 text-gray-500">
                                                     {student.end_date ? format(new Date(student.end_date), 'yyyy.MM.dd') : <span className="text-gray-400">-</span>}
                                                 </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <button onClick={() => startEdit(student)} className="text-gray-400 hover:text-emerald-600 mr-3 text-xs">수정</button>
+                                                <td className="px-6 py-4 text-right whitespace-nowrap">
+                                                    {isActive && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => openBreakModal(student)}
+                                                                className="text-amber-500 hover:underline mr-2 text-xs"
+                                                            >
+                                                                휴강
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleCancel(student)}
+                                                                className="text-red-400 hover:underline mr-2 text-xs"
+                                                            >
+                                                                취소
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    <button onClick={() => startEdit(student)} className="text-gray-400 hover:text-emerald-600 mr-2 text-xs">수정</button>
                                                     <button onClick={() => handleDelete(student)} className="text-gray-400 hover:text-red-500 text-xs">삭제</button>
                                                 </td>
                                             </>

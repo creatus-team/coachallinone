@@ -7,6 +7,7 @@ export async function GET() {
         const res = await query(`
       SELECT 
         u.*,
+        s.id as session_id,
         s.coach_id,
         c.name as coach_name,
         s.day_of_week,

@@ -1,12 +1,11 @@
 import { query } from '@/lib/db';
 import { format } from 'date-fns';
+import Link from 'next/link';
 
-// Force dynamic rendering to ensure real-time data
 export const dynamic = 'force-dynamic';
 
 async function getStats() {
   try {
-    // Active users = users with an ongoing session (start_date <= today <= end_date)
     const userCountRes = await query(`
       SELECT COUNT(DISTINCT user_id) FROM sessions 
       WHERE start_date <= CURRENT_DATE AND end_date >= CURRENT_DATE
@@ -19,15 +18,24 @@ async function getStats() {
       LIMIT 10
     `);
 
+    // 취소 요청 건수 조회
+    const cancelRes = await query(`
+      SELECT id, recipient_name, recipient_phone, content, sent_at
+      FROM message_logs
+      WHERE type = 'CANCEL_REQUEST' AND status = 'PENDING'
+      ORDER BY sent_at DESC
+    `);
+
     return {
       activeUsers: userCountRes.rows[0].count,
       sentToday: logcountRes.rows[0].count,
       recentLogs: logsRes.rows,
+      pendingCancels: cancelRes.rows,
       error: null
     };
   } catch (e: any) {
     console.error('DB Error:', e);
-    return { error: 'Database Connection Failed', activeUsers: 0, sentToday: 0, recentLogs: [] };
+    return { error: 'Database Connection Failed', activeUsers: 0, sentToday: 0, recentLogs: [], pendingCancels: [] };
   }
 }
 
@@ -41,6 +49,32 @@ export default async function DashboardPage() {
         <h1 className="text-2xl font-bold text-gray-800">홈</h1>
         <p className="text-gray-500 text-sm mt-1">실시간 시스템 모니터링</p>
       </header>
+
+      {/* Cancellation Alerts */}
+      {stats.pendingCancels.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+          <div className="flex justify-between items-center mb-3">
+            <h2 className="font-semibold text-red-700">⚠️ 취소 처리 필요 ({stats.pendingCancels.length}건)</h2>
+            <Link
+              href="/students"
+              className="text-xs text-red-600 hover:underline"
+            >
+              수강생 페이지에서 처리 →
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {stats.pendingCancels.map((cancel: any) => (
+              <div key={cancel.id} className="bg-white rounded-lg p-3 flex justify-between items-center border border-red-100">
+                <div>
+                  <span className="font-medium text-gray-800">{cancel.recipient_name}</span>
+                  <span className="text-gray-400 text-xs ml-2">{cancel.recipient_phone}</span>
+                </div>
+                <div className="text-sm text-red-600">{cancel.content}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -85,7 +119,9 @@ export default async function DashboardPage() {
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
           <h2 className="font-semibold text-gray-800">실시간 발송 로그</h2>
-          <span className="text-xs text-gray-400">최근 10건</span>
+          <Link href="/messages" className="text-xs text-emerald-600 hover:underline">
+            전체 보기 →
+          </Link>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
