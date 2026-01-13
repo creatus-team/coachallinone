@@ -44,13 +44,31 @@ export default async function DashboardPage() {
         </div>
         <div className="flex gap-3 items-center">
           <Link
-            href="/coaches"
+            href="/coaches/manage"
             className="px-4 py-2 bg-purple-500/20 text-purple-300 rounded-lg text-sm font-medium hover:bg-purple-500/30 transition-colors border border-purple-500/20"
           >
-            🧢 코치 관리
+            🧢 코치
+          </Link>
+          <Link
+            href="/slots"
+            className="px-4 py-2 bg-amber-500/20 text-amber-300 rounded-lg text-sm font-medium hover:bg-amber-500/30 transition-colors border border-amber-500/20"
+          >
+            ⏰ 슬롯
+          </Link>
+          <Link
+            href="/students"
+            className="px-4 py-2 bg-cyan-500/20 text-cyan-300 rounded-lg text-sm font-medium hover:bg-cyan-500/30 transition-colors border border-cyan-500/20"
+          >
+            👥 수강생
+          </Link>
+          <Link
+            href="/coaches"
+            className="px-4 py-2 bg-slate-700 text-slate-300 rounded-lg text-sm font-medium hover:bg-slate-600 transition-colors"
+          >
+            👀 현황
           </Link>
           <span className={`px-3 py-1 rounded-full text-xs font-bold ${stats.error ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'} border border-white/5`}>
-            {stats.error ? '시스템 오프라인 🔴' : '시스템 정상 🟢'}
+            {stats.error ? '오프라인 🔴' : '정상 🟢'}
           </span>
         </div>
       </header>
