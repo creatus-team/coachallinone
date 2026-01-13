@@ -54,20 +54,22 @@ export async function POST(request: Request) {
         const body = await request.json();
         console.log('[Rapid Webhook] Received:', JSON.stringify(body, null, 2));
 
-        // 래피드 웹훅 데이터 (필드명은 실제 데이터에 맞게 조정 필요)
-        const customerName = body.name || body.customer_name || '';
-        const customerPhone = normalizePhone(body.phone || body.customer_phone || '');
-        const purchaseOption = body.option || body.purchase_option || body.product_name || '';
-        const status = body.status || '결제 완료';
-        const amount = body.amount || 0;
+        // 래피드 실제 API 형식
+        const payment = body.payment || {};
+        const customerName = payment.name || '';
+        const customerPhone = normalizePhone(payment.phoneNumber || '');
+        const purchaseOption = payment.option || '';
+        const status = payment.status || ''; // "SUCCESS" or "CANCEL"
+        const amount = payment.amount || 0;
+        const cancelReason = payment.canceledReason || '';
 
         // 결제 취소인 경우
-        if (status.includes('취소') || status.includes('환불')) {
-            return handleCancellation(customerName, customerPhone, amount);
+        if (status === 'CANCEL') {
+            return handleCancellation(customerName, customerPhone, amount, cancelReason);
         }
 
-        // 결제 완료가 아니면 무시
-        if (!status.includes('결제 완료')) {
+        // 결제 성공이 아니면 무시
+        if (status !== 'SUCCESS') {
             return NextResponse.json({ message: 'Status ignored', status });
         }
 
@@ -77,6 +79,7 @@ export async function POST(request: Request) {
         } else {
             return handleNewEnrollment(customerName, customerPhone, purchaseOption, amount);
         }
+
 
     } catch (error: any) {
         console.error('[Rapid Webhook Error]', error);
@@ -267,18 +270,18 @@ async function handleRenewal(name: string, phone: string, amount: number) {
 }
 
 // ========== 취소 처리 ==========
-async function handleCancellation(name: string, phone: string, amount: number) {
-    console.log('[Cancellation Request]', { name, phone, amount });
+async function handleCancellation(name: string, phone: string, amount: number, cancelReason: string) {
+    console.log('[Cancellation Request]', { name, phone, amount, cancelReason });
 
     // 취소 요청 로그 기록 (관리자가 처리)
     await query(`
         INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
         VALUES ('CANCEL_REQUEST', $1, $2, $3, 'PENDING')
-    `, [name, phone, `환불 요청: ₩${amount.toLocaleString()}`]);
+    `, [name, phone, `환불 요청: ₩${amount.toLocaleString()}${cancelReason ? ` | 사유: ${cancelReason}` : ''}`]);
 
     await sendSMS({
         to: process.env.ADMIN_PHONE!,
-        text: `[취소요청] ${name}\n${phone}\n환불액: ₩${amount.toLocaleString()}\n\n관리자 페이지에서 처리 필요`,
+        text: `[취소요청] ${name}\n${phone}\n환불액: ₩${amount.toLocaleString()}${cancelReason ? `\n사유: ${cancelReason}` : ''}\n\n관리자 페이지에서 처리 필요`,
         type: 'ADMIN',
         recipientName: '관리자'
     });
