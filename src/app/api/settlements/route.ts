@@ -1,40 +1,36 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { eachWeekOfInterval, getDay, startOfMonth, endOfMonth, isWithinInterval, parseISO, format } from 'date-fns';
+import { eachWeekOfInterval, getDay, startOfMonth, endOfMonth, isWithinInterval, format } from 'date-fns';
 
 // 요일 문자열 -> 숫자 (0=일, 1=월, ...)
 const DAY_MAP: Record<string, number> = {
     '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6
 };
 
-// 특정 월에 해당 요일이 몇 번 있는지 계산
-function countSessionsInMonth(sessionStart: Date, sessionEnd: Date, dayOfWeek: string, targetMonth: Date): number {
+// 특정 월에 해당 요일의 실제 날짜들 반환
+function getSessionDatesInMonth(sessionStart: Date, sessionEnd: Date, dayOfWeek: string, targetMonth: Date): string[] {
     const monthStart = startOfMonth(targetMonth);
     const monthEnd = endOfMonth(targetMonth);
     const dayNum = DAY_MAP[dayOfWeek];
 
-    if (dayNum === undefined) return 0;
+    if (dayNum === undefined) return [];
 
-    let count = 0;
-
-    // 해당 월의 모든 주를 순회
+    const dates: string[] = [];
     const weeks = eachWeekOfInterval({ start: monthStart, end: monthEnd });
 
     for (const weekStart of weeks) {
-        // 해당 주에서 특정 요일의 날짜 계산
         const dayDate = new Date(weekStart);
         dayDate.setDate(weekStart.getDate() + ((dayNum - getDay(weekStart) + 7) % 7));
 
-        // 해당 날짜가 세션 기간과 월 범위 모두에 포함되는지 확인
         if (
             isWithinInterval(dayDate, { start: monthStart, end: monthEnd }) &&
             isWithinInterval(dayDate, { start: sessionStart, end: sessionEnd })
         ) {
-            count++;
+            dates.push(format(dayDate, 'M/d'));
         }
     }
 
-    return count;
+    return dates;
 }
 
 export async function GET(request: Request) {
@@ -45,45 +41,64 @@ export async function GET(request: Request) {
     const targetMonth = new Date(year, month - 1, 1);
 
     try {
-        // 모든 코치 가져오기
         const coachesRes = await query(`SELECT id, name, phone FROM coaches ORDER BY name`);
 
-        // 해당 월에 활성화된 세션 가져오기 (세션 기간이 해당 월과 겹치는 것)
         const sessionsRes = await query(`
       SELECT 
         s.id,
         s.coach_id,
         s.day_of_week,
+        s.start_time,
         s.start_date,
         s.end_date,
-        u.name as student_name
+        u.id as student_id,
+        u.name as student_name,
+        u.phone as student_phone
       FROM sessions s
       JOIN users u ON s.user_id = u.id
       WHERE s.start_date <= $1 AND s.end_date >= $2
     `, [endOfMonth(targetMonth), startOfMonth(targetMonth)]);
 
-        // 코치별로 집계
         const settlementsByCoach = coachesRes.rows.map(coach => {
             const coachSessions = sessionsRes.rows.filter(s => s.coach_id === coach.id);
 
             let totalSessions = 0;
-            const students: { name: string; sessions: number }[] = [];
+            const students: {
+                id: number;
+                name: string;
+                phone: string;
+                dayOfWeek: string;
+                startTime: string;
+                sessionDates: string[];
+                sessionCount: number;
+                sessionPeriod: { start: string; end: string };
+            }[] = [];
 
             for (const session of coachSessions) {
-                const sessionCount = countSessionsInMonth(
+                const sessionDates = getSessionDatesInMonth(
                     new Date(session.start_date),
                     new Date(session.end_date),
                     session.day_of_week,
                     targetMonth
                 );
+                const sessionCount = sessionDates.length;
                 totalSessions += sessionCount;
+
                 students.push({
+                    id: session.student_id,
                     name: session.student_name,
-                    sessions: sessionCount
+                    phone: session.student_phone,
+                    dayOfWeek: session.day_of_week,
+                    startTime: session.start_time,
+                    sessionDates,
+                    sessionCount,
+                    sessionPeriod: {
+                        start: format(new Date(session.start_date), 'yyyy.MM.dd'),
+                        end: format(new Date(session.end_date), 'yyyy.MM.dd')
+                    }
                 });
             }
 
-            // 정산 금액 계산 (1회당 35,000원 가정)
             const pricePerSession = 35000;
             const totalAmount = totalSessions * pricePerSession;
 
@@ -99,14 +114,14 @@ export async function GET(request: Request) {
             };
         });
 
-        // 세션이 있는 코치만 필터링
         const activeSettlements = settlementsByCoach.filter(s => s.totalSessions > 0);
 
         return NextResponse.json({
             year,
             month,
             settlements: activeSettlements,
-            grandTotal: activeSettlements.reduce((sum, s) => sum + s.totalAmount, 0)
+            grandTotal: activeSettlements.reduce((sum, s) => sum + s.totalAmount, 0),
+            grandTotalSessions: activeSettlements.reduce((sum, s) => sum + s.totalSessions, 0)
         });
 
     } catch (error: any) {
