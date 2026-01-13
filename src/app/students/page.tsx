@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { format, isAfter, isBefore } from 'date-fns';
+import Link from 'next/link';
 
 interface Student {
     id: number;
@@ -399,7 +400,11 @@ export default function StudentsPage() {
                                             </>
                                         ) : (
                                             <>
-                                                <td className="px-6 py-4 font-medium text-gray-800">{student.name}</td>
+                                                <td className="px-6 py-4 font-medium text-gray-800">
+                                                    <Link href={`/students/${student.id}`} className="hover:text-emerald-600 hover:underline">
+                                                        {student.name}
+                                                    </Link>
+                                                </td>
                                                 <td className="px-6 py-4 text-gray-600 font-mono text-xs">{student.phone}</td>
                                                 <td className="px-6 py-4 text-gray-600">
                                                     {student.coach_name ? (

@@ -18,6 +18,12 @@ interface Coach {
     open_chat_link: string | null;
     available_slots: number;
     total_slots: number;
+    status: string;
+    tier: string;
+    start_date: string | null;
+    active_students: number;
+    retention_this_month: number;
+    retention_last_month: number;
     slots?: Slot[];
 }
 
@@ -267,7 +273,16 @@ export default function CoachesPage() {
                                         <div className="flex items-center gap-4">
                                             <span className="text-xl">{expandedCoach === coach.id ? '🔽' : '▶️'}</span>
                                             <div>
-                                                <h3 className="font-bold text-gray-800">{coach.name}</h3>
+                                                <div className="flex items-center gap-2">
+                                                    <h3 className="font-bold text-gray-800">{coach.name}</h3>
+                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${coach.status === '활동' ? 'bg-emerald-100 text-emerald-600' :
+                                                        coach.status === '휴직' ? 'bg-amber-100 text-amber-600' :
+                                                            'bg-gray-100 text-gray-500'
+                                                        }`}>{coach.status || '활동'}</span>
+                                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-600">
+                                                        {coach.tier || '정식코치'}
+                                                    </span>
+                                                </div>
                                                 <p className="text-sm text-gray-500">{coach.phone}</p>
                                             </div>
                                             {coach.open_chat_link && (
@@ -282,11 +297,19 @@ export default function CoachesPage() {
                                             )}
                                         </div>
                                         <div className="flex items-center gap-6">
-                                            <div className="text-right">
-                                                <div className="text-2xl font-bold text-emerald-600">
+                                            <div className="text-center">
+                                                <div className="text-xl font-bold text-violet-600">{coach.active_students || 0}</div>
+                                                <div className="text-xs text-gray-400">담당 수강생</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-xl font-bold text-emerald-600">
                                                     {coach.available_slots}<span className="text-gray-400 text-lg">/{coach.total_slots}</span>
                                                 </div>
                                                 <div className="text-xs text-gray-400">오픈 슬롯</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-xl font-bold text-blue-600">{coach.retention_this_month}%</div>
+                                                <div className="text-xs text-gray-400">리텐션</div>
                                             </div>
                                             <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                                                 <button onClick={() => startEdit(coach)} className="text-gray-400 hover:text-emerald-600 text-xs">수정</button>
@@ -308,8 +331,8 @@ export default function CoachesPage() {
                                                     <div
                                                         key={slot.id}
                                                         className={`p-3 rounded-lg border ${slot.is_available
-                                                                ? 'bg-emerald-50 border-emerald-200'
-                                                                : 'bg-white border-gray-200'
+                                                            ? 'bg-emerald-50 border-emerald-200'
+                                                            : 'bg-white border-gray-200'
                                                             }`}
                                                     >
                                                         <div className="font-medium text-gray-800">

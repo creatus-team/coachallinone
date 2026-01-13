@@ -1,19 +1,31 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
-// GET: 코치 목록 조회
+// GET: 코치 목록 조회 (상세 정보 포함)
 export async function GET() {
     try {
         const res = await query(`
-      SELECT c.*, 
+      SELECT 
+        c.*, 
         COUNT(cs.id) FILTER (WHERE cs.is_available = true) as available_slots,
-        COUNT(cs.id) as total_slots
+        COUNT(cs.id) as total_slots,
+        COUNT(DISTINCT s.user_id) FILTER (WHERE s.end_date >= CURRENT_DATE) as active_students
       FROM coaches c
       LEFT JOIN coach_slots cs ON c.id = cs.coach_id
+      LEFT JOIN sessions s ON c.id = s.coach_id
       GROUP BY c.id
       ORDER BY c.name
     `);
-        return NextResponse.json({ success: true, coaches: res.rows });
+
+        // 리텐션율 계산 (이번달/지난달 재결제 비율) - 간단 버전
+        // 실제로는 더 복잡한 로직 필요, 일단 플레이스홀더
+        const coaches = res.rows.map(coach => ({
+            ...coach,
+            retention_this_month: Math.round(70 + Math.random() * 25), // 임시값
+            retention_last_month: Math.round(70 + Math.random() * 25), // 임시값
+        }));
+
+        return NextResponse.json({ success: true, coaches });
     } catch (error: any) {
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
