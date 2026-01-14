@@ -25,26 +25,39 @@ function getNextWeekDay(fromDate: Date, dayOfWeek: string): Date {
     return targetDate;
 }
 
-// 구매옵션 파싱: "홍성준/월요일/21:00~21:40" -> { coach, day, time }
+// 구매옵션 파싱: "홍성준/월요일/21:00~21:40" or "21:00-21:40" -> { coach, day, time }
 function parseOption(optionStr: string): { coach: string; day: string; time: string } | null {
     if (!optionStr || optionStr === '재결제') return null;
 
     const parts = optionStr.split('/');
+
+    // 시간 범위에서 시작 시간 추출 (~ 또는 - 둘 다 지원)
+    const extractTime = (timeRange: string): string => {
+        // ~ 또는 - 로 분리
+        if (timeRange.includes('~')) {
+            return timeRange.split('~')[0].trim();
+        } else if (timeRange.includes('-')) {
+            // 22:00-22:40 형식 처리 (시간:분-시간:분)
+            const match = timeRange.match(/^(\d{1,2}:\d{2})/);
+            return match ? match[1] : timeRange.trim();
+        }
+        return timeRange.trim();
+    };
 
     // 새 형식: "홍성준/월요일/21:00~21:40" (3파트)
     // 기존 형식: "홍성준/매주/월요일/21:00~21:40" (4파트) - 하위호환
     if (parts.length === 3) {
         const coach = parts[0].trim();
         const day = parts[1].trim(); // 월요일, 화요일 등
-        const timeRange = parts[2].trim(); // 21:00~21:40
-        const time = timeRange.split('~')[0]; // 시작 시간만
+        const timeRange = parts[2].trim(); // 21:00~21:40 or 21:00-21:40
+        const time = extractTime(timeRange);
         return { coach, day, time };
     } else if (parts.length >= 4) {
         // 기존 형식 하위호환
         const coach = parts[0].trim();
         const day = parts[2].trim();
         const timeRange = parts[3].trim();
-        const time = timeRange.split('~')[0];
+        const time = extractTime(timeRange);
         return { coach, day, time };
     }
 
