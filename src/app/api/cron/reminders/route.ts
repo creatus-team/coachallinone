@@ -118,17 +118,13 @@ export async function GET(request: Request) {
             // 📅 현재 주차 계산
             const currentWeek = getCurrentWeek(new Date(session.start_date));
 
-            // 📋 발송 조건: 2주차부터 (재결제는 1주차부터)
-            const minWeek = session.is_renewal ? 1 : 2;
-            if (currentWeek < minWeek) {
-                results.skipped.push(`${session.user_name}: ${currentWeek}주차 (${minWeek}주차부터 발송)`);
-                continue;
-            }
-
             // ===== D-2 (48시간 전 알림) =====
             if (diffHours >= 46 && diffHours <= 50) {
                 try {
-                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.\n만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}`;
+                    // 1주차: 단순 일정 알림 / 2주차~: 코칭신청서 요청
+                    const msg = currentWeek === 1
+                        ? `[크리투스 코칭 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.`
+                        : `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 모레(${dayStr}) 코칭 48시간 전입니다.\n만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}`;
 
                     await sendSMS({
                         to: session.user_phone,
@@ -145,7 +141,10 @@ export async function GET(request: Request) {
             // ===== D-1 (30시간 전 마감임박 알림) =====
             else if (diffHours >= 28 && diffHours <= 32) {
                 try {
-                    const msg = `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다! 만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}\n\n(코칭 24시간 이내 미접수 시 대체 코칭 진행)`;
+                    // 1주차: 단순 일정 알림 / 2주차~: 코칭신청서 요청
+                    const msg = currentWeek === 1
+                        ? `[크리투스 코칭 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다!`
+                        : `[크리투스 코칭신청 리마인드]\n\n${session.user_name}님, 코칭 30시간 전 입니다! 만약 아직 작성 전이라면 반드시 "지금" 코칭신청서를 작성해주세요.\n👉 ${SURVEY_LINK}\n\n(코칭 24시간 이내 미접수 시 대체 코칭 진행)`;
 
                     await sendSMS({
                         to: session.user_phone,

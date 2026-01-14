@@ -25,19 +25,30 @@ function getNextWeekDay(fromDate: Date, dayOfWeek: string): Date {
     return targetDate;
 }
 
-// 구매옵션 파싱: "홍성준/매주/월요일/21:00~21:40" -> { coach, day, time }
+// 구매옵션 파싱: "홍성준/월요일/21:00~21:40" -> { coach, day, time }
 function parseOption(optionStr: string): { coach: string; day: string; time: string } | null {
     if (!optionStr || optionStr === '재결제') return null;
 
     const parts = optionStr.split('/');
-    if (parts.length < 4) return null;
 
-    const coach = parts[0].trim();
-    const day = parts[2].trim(); // 월요일, 화요일 등
-    const timeRange = parts[3].trim(); // 21:00~21:40
-    const time = timeRange.split('~')[0]; // 시작 시간만
+    // 새 형식: "홍성준/월요일/21:00~21:40" (3파트)
+    // 기존 형식: "홍성준/매주/월요일/21:00~21:40" (4파트) - 하위호환
+    if (parts.length === 3) {
+        const coach = parts[0].trim();
+        const day = parts[1].trim(); // 월요일, 화요일 등
+        const timeRange = parts[2].trim(); // 21:00~21:40
+        const time = timeRange.split('~')[0]; // 시작 시간만
+        return { coach, day, time };
+    } else if (parts.length >= 4) {
+        // 기존 형식 하위호환
+        const coach = parts[0].trim();
+        const day = parts[2].trim();
+        const timeRange = parts[3].trim();
+        const time = timeRange.split('~')[0];
+        return { coach, day, time };
+    }
 
-    return { coach, day, time };
+    return null;
 }
 
 // 전화번호 정규화
@@ -84,12 +95,11 @@ export async function POST(request: Request) {
     } catch (error: any) {
         console.error('[Rapid Webhook Error]', error);
 
-        await sendSMS({
-            to: process.env.ADMIN_PHONE!,
-            text: `[시스템오류] Rapid 웹훅 처리 실패\n${error.message}`,
-            type: 'ADMIN',
-            recipientName: '관리자'
-        });
+        // 오류는 SYSTEM_ALERT 로그에 기록 (SMS 대신)
+        await query(`
+            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+            VALUES ('SYSTEM_ALERT', '시스템', '', $1, 'PENDING')
+        `, [`[웹훅오류] Rapid 웹훅 처리 실패\n${error.message}`]);
 
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -232,18 +242,11 @@ async function handleNewEnrollment(name: string, phone: string, option: string, 
         WHERE coach_id = $2 AND day_of_week = $3 AND start_time = $4
     `, [userId, coach.id, parsed.day, parsed.time]);
 
-    // 8. 알림
+    // 8. 로그 (정상 결제는 알림 불필요 - 자동 처리됨)
     const startDateStr = format(firstSessionDate, 'M/d(EEE)');
     const endDateStr = format(sessionEndDate, 'M/d(EEE)');
 
-    await sendSMS({
-        to: process.env.ADMIN_PHONE!,
-        text: `[신규결제] ${name}\n코치: ${parsed.coach}\n수업: ${parsed.day} ${parsed.time}\n기간: ${startDateStr}~${endDateStr}`,
-        type: 'NEW',
-        recipientName: '관리자'
-    });
-
-    console.log('[New Enrollment Complete]', { user: name, coach: parsed.coach, slot: `${parsed.day} ${parsed.time}` });
+    console.log('[New Enrollment Complete]', { user: name, coach: parsed.coach, slot: `${parsed.day} ${parsed.time}`, period: `${startDateStr}~${endDateStr}` });
 
     return NextResponse.json({
         success: true,
@@ -305,15 +308,8 @@ async function handleRenewal(name: string, phone: string, amount: number) {
     // 4. 유저 상태 업데이트
     await query(`UPDATE users SET status = 'active' WHERE id = $1`, [userId]);
 
-    // 5. 알림
+    // 5. 로그 (정상 재결제는 알림 불필요)
     const endDateStr = format(newEndDate, 'M/d(EEE)');
-
-    await sendSMS({
-        to: process.env.ADMIN_PHONE!,
-        text: `[재결제] ${name}\n코치: ${session.coach_name}\n연장 종료일: ${endDateStr}`,
-        type: 'RENEWAL',
-        recipientName: '관리자'
-    });
 
     console.log('[Renewal Complete]', { user: name, coach: session.coach_name, newEndDate: endDateStr });
 

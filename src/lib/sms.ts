@@ -12,7 +12,7 @@ const messageService = new SolapiMessageService(
 interface SMSParams {
     to: string;
     text: string;
-    type: 'NEW' | 'RENEWAL' | 'D-2' | 'D-1' | 'ADMIN' | 'PRE_SURVEY' | 'COACHING_FORM';
+    type: 'NEW' | 'RENEWAL' | 'D-2' | 'D-1' | 'ADMIN' | 'PRE_SURVEY' | 'COACHING_FORM' | 'SYSTEM_ALERT' | 'CANCEL_REQUEST';
     recipientName: string;
 }
 
