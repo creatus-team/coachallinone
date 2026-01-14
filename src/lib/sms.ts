@@ -1,6 +1,9 @@
 import { SolapiMessageService } from 'solapi';
 import { query } from './db';
 
+// 🔒 SMS 발송 비활성화 플래그 (true로 변경하면 발송 활성화)
+const SMS_ENABLED = false;
+
 const messageService = new SolapiMessageService(
     process.env.SOLAPI_API_KEY!,
     process.env.SOLAPI_API_SECRET!
@@ -18,6 +21,20 @@ export async function sendSMS({ to, text, type, recipientName }: SMSParams) {
     let phone = to.replace(/[^0-9]/g, '');
     if (phone.startsWith('10') && phone.length === 10) phone = '0' + phone;
     if (phone.startsWith('82')) phone = '0' + phone.slice(2);
+
+    // 🔒 SMS 비활성화 시 로그만 기록
+    if (!SMS_ENABLED) {
+        console.log(`[SMS DISABLED] Would send to: ${phone} | Type: ${type}`);
+        console.log(`[SMS DISABLED] Content: ${text.substring(0, 50)}...`);
+
+        // DB에는 기록 (추적용)
+        await query(`
+            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+            VALUES ($1, $2, $3, $4, 'DISABLED')
+        `, [type, recipientName, phone, `[발송안됨] ${text}`]);
+
+        return { success: true, disabled: true };
+    }
 
     try {
         const res = await messageService.sendOne({
@@ -47,3 +64,4 @@ export async function sendSMS({ to, text, type, recipientName }: SMSParams) {
         return { success: false, error: error.message };
     }
 }
+
