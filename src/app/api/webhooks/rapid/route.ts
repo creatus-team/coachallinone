@@ -74,20 +74,38 @@ function normalizePhone(phone: string): string {
 }
 
 export async function POST(request: Request) {
-    // 1. 먼저 raw body를 로그에 저장 (웹훅 수신 증거)
+    // 1. JSON 파싱
     let body: any;
     try {
         body = await request.json();
     } catch (parseError) {
-        // JSON 파싱 실패해도 200 반환 (래피드에겐 성공으로 보이게)
         console.error('[Rapid Webhook] JSON Parse Error:', parseError);
         return NextResponse.json({ received: true, error: 'JSON parse failed' });
     }
 
-    // 2. 수신 즉시 로그 (처리 전에 기록)
     console.log('[Rapid Webhook] Received:', JSON.stringify(body).substring(0, 500));
 
+    // 2. Raw Data 저장 (가장 중요: 무조건 저장)
+    let rawId: number | null = null;
     try {
+        const insertRes = await query(`
+            INSERT INTO raw_webhooks (source, payload, status)
+            VALUES ($1, $2, 'PENDING')
+            RETURNING id
+        `, ['rapid', body]);
+
+        if (insertRes.rows.length > 0) {
+            rawId = insertRes.rows[0].id;
+            console.log(`[Rapid Webhook] Saved to raw_webhooks (ID: ${rawId})`);
+        }
+    } catch (dbError) {
+        console.error('[Rapid Webhook] Failed to save raw data:', dbError);
+        // DB 저장 실패해도 비즈니스 로직은 시도해야 함
+    }
+
+    try {
+        // ========== 비즈니스 로직 시작 ==========
+
         // 래피드 실제 API 형식
         const payment = body.payment || {};
         const customerName = payment.name || '';
@@ -97,44 +115,70 @@ export async function POST(request: Request) {
         const amount = payment.amount || 0;
         const cancelReason = payment.canceledReason || '';
 
-        // 웹훅 수신 로그 기록 (DB에 저장)
+        // 웹훅 수신 로그 기록 (기존 message_logs)
+        // 편의를 위해 남겨두지만, raw_webhooks가 1차 원본임
         await query(`
             INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
             VALUES ('WEBHOOK_RECEIVED', $1, $2, $3, 'PENDING')
         `, [customerName, customerPhone, `옵션: ${purchaseOption} | 금액: ${amount} | 상태: ${status}`]);
 
+        let result;
+
         // 결제 취소인 경우
         if (status === 'CANCEL') {
-            return handleCancellation(customerName, customerPhone, amount, cancelReason);
+            result = await handleCancellation(customerName, customerPhone, amount, cancelReason);
         }
-
         // 결제 성공이 아니면 무시
-        if (status !== 'SUCCESS') {
-            return NextResponse.json({ message: 'Status ignored', status });
+        else if (status !== 'SUCCESS') {
+            result = NextResponse.json({ message: 'Status ignored', status });
+        }
+        // 재결제 vs 신규 분기
+        else if (purchaseOption === '재결제' || purchaseOption.includes('재결제')) {
+            result = await handleRenewal(customerName, customerPhone, amount);
+        } else {
+            result = await handleNewEnrollment(customerName, customerPhone, purchaseOption, amount);
         }
 
-        // 재결제 vs 신규 분기
-        if (purchaseOption === '재결제' || purchaseOption.includes('재결제')) {
-            return handleRenewal(customerName, customerPhone, amount);
-        } else {
-            return handleNewEnrollment(customerName, customerPhone, purchaseOption, amount);
+        // ========== 비즈니스 로직 성공 ==========
+
+        // Raw Data 상태 업데이트 (PROCESSED)
+        if (rawId) {
+            await query(`UPDATE raw_webhooks SET status = 'PROCESSED', processed_at = NOW() WHERE id = $1`, [rawId]);
         }
+
+        // 핸들러 함수들은 NextResponse를 반환하므로, 여기서 200 OK를 보장하기 위해 
+        // 핸들러의 응답과 상관없이 성공으로 간주하고 단순 응답을 보냅니다. 
+        // (단, 핸들러 내부에서 에러가 터지면 catch로 잡힘)
+        return NextResponse.json({ received: true });
 
     } catch (error: any) {
+        // ========== 비즈니스 로직 실패 ==========
         console.error('[Rapid Webhook Error]', error);
 
-        // 오류는 SYSTEM_ALERT 로그에 기록 (SMS 대신)
+        // Raw Data 상태 업데이트 (FAILED)
+        if (rawId) {
+            try {
+                await query(`
+                    UPDATE raw_webhooks 
+                    SET status = 'FAILED', error_log = $2 
+                    WHERE id = $1
+                `, [rawId, error.message]);
+            } catch (updateError) {
+                console.error('[Rapid Webhook] Failed to update failure status:', updateError);
+            }
+        }
+
+        // 오류는 SYSTEM_ALERT 로그에 기록
         try {
             await query(`
                 INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
                 VALUES ('SYSTEM_ALERT', '시스템', '', $1, 'PENDING')
-            `, [`[웹훅오류] Rapid 웹훅 처리 실패\n${error.message}\n\nBody: ${JSON.stringify(body).substring(0, 300)}`]);
+            `, [`[웹훅오류] Rapid 웹훅 처리 실패\n${error.message}\n\nRawID: ${rawId}`]);
         } catch (logError) {
             console.error('[Failed to log error]', logError);
         }
 
-        // ⚠️ 중요: 에러가 나도 200 반환 (래피드가 재시도 안 하게)
-        // 우리가 내부적으로 처리할 수 있으니까
+        // ⚠️ 무조건 200 OK 반환 (래피드 재시도 방지)
         return NextResponse.json({
             received: true,
             error: error.message,
