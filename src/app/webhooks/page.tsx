@@ -62,9 +62,9 @@ export default function WebhooksPage() {
                             <tr>
                                 <th className="px-6 py-3 w-20">ID</th>
                                 <th className="px-6 py-3 w-40">수신 시간</th>
-                                <th className="px-6 py-3 w-32">출처</th>
-                                <th className="px-6 py-3 w-32">상태</th>
-                                <th className="px-6 py-3">Payload (원본)</th>
+                                <th className="px-6 py-3 w-24">상태</th>
+                                <th className="px-6 py-3">이름/연락처</th>
+                                <th className="px-6 py-3">옵션/금액</th>
                                 <th className="px-6 py-3 w-24">상세</th>
                             </tr>
                         </thead>
@@ -82,52 +82,68 @@ export default function WebhooksPage() {
                                     </td>
                                 </tr>
                             ) : (
-                                logs.map((log) => (
-                                    <>
-                                        <tr key={log.id} className="hover:bg-gray-50 transition-colors">
-                                            <td className="px-6 py-4 font-mono text-gray-500">#{log.id}</td>
-                                            <td className="px-6 py-4 text-gray-700">
-                                                {format(new Date(log.created_at), 'MM/dd HH:mm:ss')}
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                                    {log.source}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <StatusBadge status={log.status} />
-                                            </td>
-                                            <td className="px-6 py-4 max-w-md truncate font-mono text-xs text-gray-500">
-                                                {JSON.stringify(log.payload)}
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <button
-                                                    onClick={() => toggleExpand(log.id)}
-                                                    className="text-blue-600 hover:text-blue-800 font-medium text-xs"
-                                                >
-                                                    {expandedId === log.id ? '접기' : '보기'}
-                                                </button>
-                                            </td>
-                                        </tr>
-                                        {expandedId === log.id && (
-                                            <tr className="bg-gray-50">
-                                                <td colSpan={6} className="px-6 py-4">
-                                                    <div className="space-y-4">
-                                                        {log.error_log && (
-                                                            <div className="bg-red-50 text-red-700 p-4 rounded-lg border border-red-100 text-xs font-mono whitespace-pre-wrap">
-                                                                <strong>Error Log:</strong><br />
-                                                                {log.error_log}
-                                                            </div>
-                                                        )}
-                                                        <div className="bg-gray-800 text-green-400 p-4 rounded-lg overflow-auto max-h-96 text-xs font-mono">
-                                                            <pre>{JSON.stringify(log.payload, null, 2)}</pre>
-                                                        </div>
+                                logs.map((log) => {
+                                    // Payload 파싱 (RapidPayment 웹훅 구조 가정)
+                                    const payment = log.payload?.payment || {};
+                                    const name = payment.name || '-';
+                                    const phone = payment.phoneNumber || '-';
+                                    const option = payment.option || '-';
+                                    const amount = payment.amount ? `${payment.amount.toLocaleString()}원` : '-';
+
+                                    return (
+                                        <>
+                                            <tr key={log.id} className="hover:bg-gray-50 transition-colors">
+                                                <td className="px-6 py-4 font-mono text-gray-500">#{log.id}</td>
+                                                <td className="px-6 py-4 text-gray-700">
+                                                    {format(new Date(log.created_at), 'MM/dd HH:mm:ss')}
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <StatusBadge status={log.status} />
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex flex-col">
+                                                        <span className="font-medium text-gray-900">{name}</span>
+                                                        <span className="text-xs text-gray-400">{phone}</span>
                                                     </div>
                                                 </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm text-gray-900 line-clamp-1" title={option}>{option}</span>
+                                                        <span className="text-xs text-emerald-600 font-medium">{amount}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <button
+                                                        onClick={() => toggleExpand(log.id)}
+                                                        className="text-blue-600 hover:text-blue-800 font-medium text-xs border border-blue-200 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
+                                                    >
+                                                        {expandedId === log.id ? '닫기' : 'Raw'}
+                                                    </button>
+                                                </td>
                                             </tr>
-                                        )}
-                                    </>
-                                ))
+                                            {expandedId === log.id && (
+                                                <tr className="bg-gray-50">
+                                                    <td colSpan={6} className="px-6 py-4">
+                                                        <div className="space-y-4">
+                                                            {log.error_log && (
+                                                                <div className="bg-red-50 text-red-700 p-4 rounded-lg border border-red-100 text-xs font-mono whitespace-pre-wrap">
+                                                                    <strong>Error Log:</strong><br />
+                                                                    {log.error_log}
+                                                                </div>
+                                                            )}
+                                                            <div className="relative">
+                                                                <div className="absolute top-2 right-2 text-xs text-gray-400 font-mono">JSON Payload</div>
+                                                                <div className="bg-gray-800 text-green-400 p-4 rounded-lg overflow-auto max-h-96 text-xs font-mono shadow-inner">
+                                                                    <pre>{JSON.stringify(log.payload, null, 2)}</pre>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </>
+                                    );
+                                })
                             )}
                         </tbody>
                     </table>
