@@ -74,10 +74,20 @@ function normalizePhone(phone: string): string {
 }
 
 export async function POST(request: Request) {
+    // 1. 먼저 raw body를 로그에 저장 (웹훅 수신 증거)
+    let body: any;
     try {
-        const body = await request.json();
-        console.log('[Rapid Webhook] Received:', JSON.stringify(body, null, 2));
+        body = await request.json();
+    } catch (parseError) {
+        // JSON 파싱 실패해도 200 반환 (래피드에겐 성공으로 보이게)
+        console.error('[Rapid Webhook] JSON Parse Error:', parseError);
+        return NextResponse.json({ received: true, error: 'JSON parse failed' });
+    }
 
+    // 2. 수신 즉시 로그 (처리 전에 기록)
+    console.log('[Rapid Webhook] Received:', JSON.stringify(body).substring(0, 500));
+
+    try {
         // 래피드 실제 API 형식
         const payment = body.payment || {};
         const customerName = payment.name || '';
@@ -86,6 +96,12 @@ export async function POST(request: Request) {
         const status = payment.status || ''; // "SUCCESS" or "CANCEL"
         const amount = payment.amount || 0;
         const cancelReason = payment.canceledReason || '';
+
+        // 웹훅 수신 로그 기록 (DB에 저장)
+        await query(`
+            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+            VALUES ('WEBHOOK_RECEIVED', $1, $2, $3, 'PENDING')
+        `, [customerName, customerPhone, `옵션: ${purchaseOption} | 금액: ${amount} | 상태: ${status}`]);
 
         // 결제 취소인 경우
         if (status === 'CANCEL') {
@@ -104,17 +120,26 @@ export async function POST(request: Request) {
             return handleNewEnrollment(customerName, customerPhone, purchaseOption, amount);
         }
 
-
     } catch (error: any) {
         console.error('[Rapid Webhook Error]', error);
 
         // 오류는 SYSTEM_ALERT 로그에 기록 (SMS 대신)
-        await query(`
-            INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
-            VALUES ('SYSTEM_ALERT', '시스템', '', $1, 'PENDING')
-        `, [`[웹훅오류] Rapid 웹훅 처리 실패\n${error.message}`]);
+        try {
+            await query(`
+                INSERT INTO message_logs (type, recipient_name, recipient_phone, content, status)
+                VALUES ('SYSTEM_ALERT', '시스템', '', $1, 'PENDING')
+            `, [`[웹훅오류] Rapid 웹훅 처리 실패\n${error.message}\n\nBody: ${JSON.stringify(body).substring(0, 300)}`]);
+        } catch (logError) {
+            console.error('[Failed to log error]', logError);
+        }
 
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        // ⚠️ 중요: 에러가 나도 200 반환 (래피드가 재시도 안 하게)
+        // 우리가 내부적으로 처리할 수 있으니까
+        return NextResponse.json({
+            received: true,
+            error: error.message,
+            note: 'Error logged for manual processing'
+        });
     }
 }
 
