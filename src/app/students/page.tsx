@@ -20,13 +20,14 @@ interface Student {
     total_sessions?: number;
 }
 
-interface ActivityLog {
+interface Session {
     id: number;
-    action_type: string;
-    old_value?: string;
-    new_value?: string;
-    reason?: string;
-    created_at: string;
+    coach_name: string;
+    day_of_week: string;
+    start_time: string;
+    start_date: string;
+    end_date: string;
+    extension_count: number;
 }
 
 function getSessionStatus(student: Student): { label: string; color: string } {
@@ -56,8 +57,9 @@ export default function StudentsPage() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     const [expandedId, setExpandedId] = useState<number | null>(null);
-    const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [sessions, setSessions] = useState<Session[]>([]);
     const [memo, setMemo] = useState('');
+    const [originalMemo, setOriginalMemo] = useState('');
     const [memoSaving, setMemoSaving] = useState(false);
     const [memoSaved, setMemoSaved] = useState(false);
     const [error, setError] = useState('');
@@ -86,22 +88,26 @@ export default function StudentsPage() {
     const toggleExpand = async (student: Student) => {
         if (expandedId === student.id) {
             setExpandedId(null);
-            setLogs([]);
+            setSessions([]);
             setMemo('');
+            setOriginalMemo('');
             return;
         }
         setExpandedId(student.id);
         setMemoSaved(false);
 
         try {
-            const [logsRes, memoRes] = await Promise.all([
-                fetch(`/api/students/${student.id}/logs`),
+            // Fetch sessions and memo
+            const [sessionsRes, memoRes] = await Promise.all([
+                fetch(`/api/students/${student.id}/sessions`),
                 fetch(`/api/students/${student.id}/memos`)
             ]);
-            const logsData = await logsRes.json();
+            const sessionsData = await sessionsRes.json();
             const memoData = await memoRes.json();
-            setLogs(logsData.logs || []);
-            setMemo(memoData.memos?.[0]?.content || '');
+            setSessions(sessionsData.sessions || []);
+            const memoContent = memoData.memos?.[0]?.content || '';
+            setMemo(memoContent);
+            setOriginalMemo(memoContent);
         } catch (e) {
             console.error('Error loading details:', e);
         }
@@ -117,6 +123,7 @@ export default function StudentsPage() {
             });
             const data = await res.json();
             if (data.success) {
+                setOriginalMemo(memo);
                 setMemoSaved(true);
                 setTimeout(() => setMemoSaved(false), 3000);
             }
@@ -285,72 +292,59 @@ export default function StudentsPage() {
                                 {/* Expanded Details */}
                                 {isExpanded && (
                                     <div className="px-5 py-4 bg-gray-50 border-t">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                            {/* 기본 정보 */}
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {/* 코칭 히스토리 */}
                                             <div className="bg-white p-4 rounded-lg border">
                                                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                                    <span>📋</span> 기본 정보
+                                                    <span>📊</span> 코칭 히스토리
                                                 </h4>
-                                                <div className="space-y-2 text-sm">
-                                                    <div className="flex justify-between">
-                                                        <span className="text-gray-500">첫 결제일</span>
-                                                        <span className="font-medium">{student.first_start_date ? format(new Date(student.first_start_date), 'yyyy.MM.dd') : '-'}</span>
-                                                    </div>
-                                                    <div className="flex justify-between">
-                                                        <span className="text-gray-500">현재 회차</span>
-                                                        <span className="font-medium">
-                                                            {student.start_date ? format(new Date(student.start_date), 'M/d') : '-'} ~ {student.end_date ? format(new Date(student.end_date), 'M/d') : '-'}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex justify-between">
-                                                        <span className="text-gray-500">총 결제 횟수</span>
-                                                        <span className="font-medium">{(student.extension_count || 0) + 1}회</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            {/* 활동 로그 */}
-                                            <div className="bg-white p-4 rounded-lg border">
-                                                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                                    <span>📊</span> 활동 로그
-                                                </h4>
-                                                {logs.length > 0 ? (
-                                                    <div className="space-y-2 max-h-32 overflow-y-auto">
-                                                        {logs.slice(0, 5).map(log => (
-                                                            <div key={log.id} className="flex items-center gap-2 text-sm">
-                                                                <span className="text-xs text-gray-400 w-14">{format(new Date(log.created_at), 'MM.dd')}</span>
-                                                                <span className={`px-1.5 py-0.5 rounded text-xs ${log.action_type === 'BREAK' ? 'bg-amber-100 text-amber-700' :
-                                                                        log.action_type === 'EXTENSION' ? 'bg-green-100 text-green-700' :
-                                                                            log.action_type === 'CANCEL' ? 'bg-red-100 text-red-700' :
-                                                                                'bg-gray-100 text-gray-600'
-                                                                    }`}>{log.action_type}</span>
-                                                                <span className="text-gray-600 truncate">{log.new_value || log.reason || '-'}</span>
+                                                {sessions.length > 0 ? (
+                                                    <div className="space-y-2">
+                                                        {sessions.map((sess, idx) => (
+                                                            <div key={sess.id} className={`flex items-center gap-3 p-2 rounded-lg text-sm ${idx === 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50'}`}>
+                                                                <div className="flex-shrink-0">
+                                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${idx === 0 ? 'bg-emerald-100 text-emerald-700' : sess.extension_count > 0 ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                                        {idx === 0 ? '현재' : sess.extension_count > 0 ? '재결제' : '신규'}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex-1">
+                                                                    <div className="font-medium text-gray-800">{sess.coach_name}</div>
+                                                                    <div className="text-xs text-gray-500">{sess.day_of_week} {sess.start_time?.slice(0, 5)}</div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="text-sm text-gray-600">
+                                                                        {format(new Date(sess.start_date), 'yy.MM.dd')} ~ {format(new Date(sess.end_date), 'MM.dd')}
+                                                                    </div>
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>
-                                                ) : <div className="text-sm text-gray-400 py-4 text-center">기록된 활동 없음</div>}
+                                                ) : <div className="text-sm text-gray-400 py-4 text-center">코칭 기록 없음</div>}
                                             </div>
 
                                             {/* 메모 */}
                                             <div className="bg-white p-4 rounded-lg border">
                                                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
                                                     <span>📌</span> 특이사항 메모
+                                                    {originalMemo && <span className="text-xs text-emerald-500">(저장됨)</span>}
                                                 </h4>
                                                 <textarea
                                                     value={memo}
                                                     onChange={(e) => setMemo(e.target.value)}
                                                     placeholder="이 수강생에 대한 메모를 입력하세요..."
-                                                    className="w-full text-sm border rounded-lg p-3 h-20 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                                    className="w-full text-sm border rounded-lg p-3 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-300"
                                                 />
                                                 <button
                                                     onClick={() => saveMemo(student.id)}
-                                                    disabled={memoSaving}
+                                                    disabled={memoSaving || memo === originalMemo}
                                                     className={`mt-2 w-full py-2 rounded-lg text-sm font-medium transition-colors ${memoSaved
                                                             ? 'bg-emerald-100 text-emerald-700'
-                                                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                                            : memo !== originalMemo
+                                                                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+                                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                                         }`}
                                                 >
-                                                    {memoSaving ? '저장 중...' : memoSaved ? '✅ 저장 완료!' : '💾 메모 저장'}
+                                                    {memoSaving ? '저장 중...' : memoSaved ? '✅ 저장 완료!' : memo !== originalMemo ? '💾 메모 저장' : '변경 없음'}
                                                 </button>
                                             </div>
                                         </div>
