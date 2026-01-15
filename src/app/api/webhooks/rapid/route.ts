@@ -114,6 +114,8 @@ export async function POST(request: Request) {
         const status = payment.status || ''; // "SUCCESS" or "CANCEL"
         const amount = payment.amount || 0;
         const cancelReason = payment.canceledReason || '';
+        // 이메일 추출 (Rapid Payload 구조에 따라 다를 수 있음)
+        const email = payment.buyer_email || payment.clientEmail || null;
 
         // 웹훅 수신 로그 기록 (기존 message_logs)
         // 편의를 위해 남겨두지만, raw_webhooks가 1차 원본임
@@ -136,7 +138,7 @@ export async function POST(request: Request) {
         else if (purchaseOption === '재결제' || purchaseOption.includes('재결제')) {
             result = await handleRenewal(customerName, customerPhone, amount);
         } else {
-            result = await handleNewEnrollment(customerName, customerPhone, purchaseOption, amount);
+            result = await handleNewEnrollment(customerName, customerPhone, purchaseOption, amount, email);
         }
 
         // ========== 비즈니스 로직 성공 ==========
@@ -188,7 +190,7 @@ export async function POST(request: Request) {
 }
 
 // ========== 신규 등록 처리 ==========
-async function handleNewEnrollment(name: string, phone: string, option: string, amount: number) {
+async function handleNewEnrollment(name: string, phone: string, option: string, amount: number, email?: string | null) {
     console.log('[New Enrollment]', { name, phone, option, amount });
 
     // 0-1. 멱등성 체크 (같은 전화번호로 오늘 이미 처리됐으면 무시)
@@ -302,14 +304,15 @@ async function handleNewEnrollment(name: string, phone: string, option: string, 
 
     // 5. 유저 생성/업데이트
     const userRes = await query(`
-        INSERT INTO users (name, phone, status, product_type)
-        VALUES ($1, $2, 'pending', $3)
+        INSERT INTO users (name, phone, status, product_type, email)
+        VALUES ($1, $2, 'pending', $3, $4)
         ON CONFLICT (phone) DO UPDATE SET
             name = EXCLUDED.name,
             status = 'pending',
-            product_type = EXCLUDED.product_type
+            product_type = EXCLUDED.product_type,
+            email = COALESCE(EXCLUDED.email, users.email)
         RETURNING id
-    `, [name, phone, option]);
+    `, [name, phone, option, email]);
     const userId = userRes.rows[0].id;
 
     // 6. 세션 생성
@@ -319,16 +322,29 @@ async function handleNewEnrollment(name: string, phone: string, option: string, 
     `, [userId, coach.id, parsed.day, parsed.time, firstSessionDate, sessionEndDate]);
 
     // 7. 슬롯 배정
-    await query(`
+    const updateRes = await query(`
         UPDATE coach_slots SET is_available = false, assigned_user_id = $1 
         WHERE coach_id = $2 AND day_of_week = $3 AND start_time = $4
     `, [userId, coach.id, parsed.day, parsed.time]);
 
-    // 8. 로그 (정상 결제는 알림 불필요 - 자동 처리됨)
+    console.log(`[Slot Update] User: ${userId}, Coach: ${coach.id}, Day: ${parsed.day}, Time: ${parsed.time} => Updated: ${updateRes.rowCount}`);
+
+    // 8. 코치 알림 (신규 배정 알림)
     const startDateStr = format(firstSessionDate, 'M/d(EEE)');
     const endDateStr = format(sessionEndDate, 'M/d(EEE)');
 
-    console.log('[New Enrollment Complete]', { user: name, coach: parsed.coach, slot: `${parsed.day} ${parsed.time}`, period: `${startDateStr}~${endDateStr}` });
+    // 코치에게 문자 발송
+    try {
+        await sendSMS({
+            to: coach.phone,
+            text: `[신규 배정 알림]\n\n${name}님이 배정되었습니다.\n\n- 일정: ${parsed.day} ${parsed.time}\n- 기간: ${startDateStr} ~ ${endDateStr}\n- 연락처: ${phone}`,
+            type: 'COACH_ALARM',
+            recipientName: coach.name
+        });
+        console.log(`[Coach Notification Sent] to ${coach.name}`);
+    } catch (smsError) {
+        console.error('[Coach Notification Failed]', smsError);
+    }
 
     return NextResponse.json({
         success: true,

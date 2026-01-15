@@ -63,7 +63,7 @@ export default function WebhooksPage() {
                                 <th className="px-6 py-3 w-20">ID</th>
                                 <th className="px-6 py-3 w-40">수신 시간</th>
                                 <th className="px-6 py-3 w-24">상태</th>
-                                <th className="px-6 py-3">이름/연락처</th>
+                                <th className="px-6 py-3">이름/연락처/이메일</th>
                                 <th className="px-6 py-3">옵션/금액</th>
                                 <th className="px-6 py-3 w-24">상세</th>
                             </tr>
@@ -87,6 +87,7 @@ export default function WebhooksPage() {
                                     const payment = log.payload?.payment || {};
                                     const name = payment.name || '-';
                                     const phone = payment.phoneNumber || '-';
+                                    const email = payment.buyer_email || payment.clientEmail || '-';
                                     const option = payment.option || '-';
                                     const amount = payment.amount ? `${payment.amount.toLocaleString()}원` : '-';
 
@@ -101,9 +102,12 @@ export default function WebhooksPage() {
                                                     <StatusBadge status={log.status} />
                                                 </td>
                                                 <td className="px-6 py-4">
-                                                    <div className="flex flex-col">
+                                                    <div className="flex flex-col gap-0.5">
                                                         <span className="font-medium text-gray-900">{name}</span>
-                                                        <span className="text-xs text-gray-400">{phone}</span>
+                                                        <span className="text-xs text-gray-500">{phone}</span>
+                                                        {email !== '-' && (
+                                                            <span className="text-xs text-gray-400 font-mono tracking-tight">{email}</span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-4">
