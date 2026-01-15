@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { format, isAfter, isBefore } from 'date-fns';
-import Link from 'next/link';
 
 interface Student {
     id: number;
@@ -21,25 +20,23 @@ interface Student {
     total_sessions?: number;
 }
 
+interface ActivityLog {
+    id: number;
+    action_type: string;
+    old_value?: string;
+    new_value?: string;
+    reason?: string;
+    created_at: string;
+}
+
 function getSessionStatus(student: Student): { label: string; color: string } {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
-    if (!student.start_date || !student.end_date) {
-        return { label: '미배정', color: 'bg-gray-100 text-gray-500' };
-    }
-
+    if (!student.start_date || !student.end_date) return { label: '미배정', color: 'bg-gray-100 text-gray-500' };
     const startDate = new Date(student.start_date);
     const endDate = new Date(student.end_date);
-    startDate.setHours(0, 0, 0, 0);
-    endDate.setHours(0, 0, 0, 0);
-
-    if (isAfter(startDate, today)) {
-        return { label: '대기', color: 'bg-amber-50 text-amber-600' };
-    }
-    if (isBefore(endDate, today)) {
-        return { label: '종료', color: 'bg-gray-100 text-gray-500' };
-    }
+    if (isAfter(startDate, today)) return { label: '대기', color: 'bg-amber-50 text-amber-600' };
+    if (isBefore(endDate, today)) return { label: '종료', color: 'bg-gray-100 text-gray-500' };
     return { label: '진행중', color: 'bg-emerald-50 text-emerald-600' };
 }
 
@@ -48,10 +45,14 @@ export default function StudentsPage() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
+    const [expandedId, setExpandedId] = useState<number | null>(null);
+    const [logs, setLogs] = useState<ActivityLog[]>([]);
+    const [memo, setMemo] = useState('');
+    const [memoSaving, setMemoSaving] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
 
-    // 휴강 모달 상태
+    // 휴강 모달
     const [breakModalOpen, setBreakModalOpen] = useState(false);
     const [breakStudent, setBreakStudent] = useState<Student | null>(null);
     const [breakWeeks, setBreakWeeks] = useState(1);
@@ -61,9 +62,7 @@ export default function StudentsPage() {
         try {
             const res = await fetch('/api/students');
             const data = await res.json();
-            if (data.success) {
-                setStudents(data.students);
-            }
+            if (data.success) setStudents(data.students);
         } catch (e) {
             console.error('Fetch error:', e);
         } finally {
@@ -71,47 +70,67 @@ export default function StudentsPage() {
         }
     };
 
-    useEffect(() => {
-        fetchStudents();
-    }, []);
+    useEffect(() => { fetchStudents(); }, []);
 
-    const handleBreak = async () => {
-        if (!breakStudent?.session_id) {
-            setError('세션 정보가 없어 휴강 처리할 수 없습니다');
-            setBreakModalOpen(false);
+    const toggleExpand = async (student: Student) => {
+        if (expandedId === student.id) {
+            setExpandedId(null);
             return;
         }
+        setExpandedId(student.id);
+        // Fetch logs and memo
+        try {
+            const [logsRes, memoRes] = await Promise.all([
+                fetch(`/api/students/${student.id}/logs`),
+                fetch(`/api/students/${student.id}/memos`)
+            ]);
+            const logsData = await logsRes.json();
+            const memoData = await memoRes.json();
+            setLogs(logsData.logs || []);
+            setMemo(memoData.memos?.[0]?.content || '');
+        } catch (e) {
+            console.error('Error loading details:', e);
+        }
+    };
 
+    const saveMemo = async (studentId: number) => {
+        setMemoSaving(true);
+        try {
+            await fetch(`/api/students/${studentId}/memos`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: memo })
+            });
+            setSuccess('메모 저장됨');
+            setTimeout(() => setSuccess(''), 2000);
+        } catch (e) {
+            console.error('Memo save error:', e);
+        } finally {
+            setMemoSaving(false);
+        }
+    };
+
+    const handleBreak = async () => {
+        if (!breakStudent?.session_id) { setError('세션 정보 없음'); setBreakModalOpen(false); return; }
         try {
             const res = await fetch('/api/breaks', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    sessionId: breakStudent.session_id,
-                    breakWeeks,
-                    reason: breakReason
-                }),
+                body: JSON.stringify({ sessionId: breakStudent.session_id, breakWeeks, reason: breakReason }),
             });
             const data = await res.json();
-
             if (data.success) {
-                setSuccess(`${breakStudent.name} ${breakWeeks}주 휴강 처리 완료!`);
+                setSuccess(`${breakStudent.name} ${breakWeeks}주 휴강 처리!`);
                 setBreakModalOpen(false);
-                setBreakStudent(null);
                 fetchStudents();
-                setTimeout(() => setSuccess(''), 5000);
-            } else {
-                setError(data.error);
-            }
-        } catch (e: any) {
-            setError(e.message);
-        }
+                setTimeout(() => setSuccess(''), 3000);
+            } else setError(data.error);
+        } catch (e: any) { setError(e.message); }
     };
 
     const handleCancel = async (student: Student) => {
-        const reason = prompt(`${student.name} 수강생의 매칭을 취소합니다.\n취소 사유를 입력하세요:`);
+        const reason = prompt(`${student.name} 매칭 취소 사유:`);
         if (reason === null) return;
-
         try {
             const res = await fetch('/api/cancellations', {
                 method: 'POST',
@@ -119,45 +138,23 @@ export default function StudentsPage() {
                 body: JSON.stringify({ userId: student.id, reason }),
             });
             const data = await res.json();
-
-            if (data.success) {
-                setSuccess(`${student.name} 매칭 취소 완료!`);
-                fetchStudents();
-                setTimeout(() => setSuccess(''), 5000);
-            } else {
-                setError(data.error);
-            }
-        } catch (e: any) {
-            setError(e.message);
-        }
+            if (data.success) { setSuccess(`${student.name} 취소 완료!`); fetchStudents(); setTimeout(() => setSuccess(''), 3000); }
+            else setError(data.error);
+        } catch (e: any) { setError(e.message); }
     };
 
-    const openBreakModal = (student: Student) => {
-        setBreakStudent(student);
-        setBreakWeeks(1);
-        setBreakReason('');
-        setBreakModalOpen(true);
-    };
-
-    const filteredStudents = students.filter(student => {
-        const matchesSearch = !searchTerm ||
-            student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            student.phone.includes(searchTerm) ||
-            (student.coach_name && student.coach_name.toLowerCase().includes(searchTerm.toLowerCase()));
-
-        const status = getSessionStatus(student);
-        const matchesStatus = filterStatus === 'all' ||
+    const filteredStudents = students.filter(s => {
+        const matchSearch = !searchTerm || s.name.includes(searchTerm) || s.phone.includes(searchTerm) || s.coach_name?.includes(searchTerm);
+        const status = getSessionStatus(s);
+        const matchStatus = filterStatus === 'all' ||
             (filterStatus === 'active' && status.label === '진행중') ||
             (filterStatus === 'pending' && status.label === '대기') ||
-            (filterStatus === 'completed' && status.label === '종료') ||
-            (filterStatus === 'unassigned' && status.label === '미배정');
-
-        return matchesSearch && matchesStatus;
+            (filterStatus === 'completed' && status.label === '종료');
+        return matchSearch && matchStatus;
     });
 
     const activeCount = students.filter(s => getSessionStatus(s).label === '진행중').length;
     const pendingCount = students.filter(s => getSessionStatus(s).label === '대기').length;
-    const completedCount = students.filter(s => getSessionStatus(s).label === '종료').length;
 
     return (
         <div className="p-8">
@@ -165,200 +162,125 @@ export default function StudentsPage() {
             {breakModalOpen && breakStudent && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                     <div className="bg-white rounded-xl p-6 w-full max-w-md">
-                        <h3 className="text-lg font-bold text-gray-800 mb-4">휴강 신청</h3>
-                        <p className="text-sm text-gray-600 mb-4">
-                            <strong>{breakStudent.name}</strong> 수강생의 휴강을 신청합니다.
-                        </p>
+                        <h3 className="text-lg font-bold mb-4">휴강 신청 - {breakStudent.name}</h3>
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm text-gray-600 mb-1">휴강 기간</label>
-                                <select
-                                    value={breakWeeks}
-                                    onChange={(e) => setBreakWeeks(parseInt(e.target.value))}
-                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                                >
+                                <select value={breakWeeks} onChange={(e) => setBreakWeeks(parseInt(e.target.value))} className="w-full border rounded-lg px-3 py-2 text-sm">
                                     <option value={1}>1주</option>
                                     <option value={2}>2주</option>
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-sm text-gray-600 mb-1">사유</label>
-                                <input
-                                    type="text"
-                                    value={breakReason}
-                                    onChange={(e) => setBreakReason(e.target.value)}
-                                    placeholder="예: 가족 행사, 개인 사정"
-                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                                />
+                                <input type="text" value={breakReason} onChange={(e) => setBreakReason(e.target.value)} placeholder="사유" className="w-full border rounded-lg px-3 py-2 text-sm" />
                             </div>
                         </div>
                         <div className="flex gap-2 mt-6">
-                            <button onClick={handleBreak} className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600">휴강 신청</button>
-                            <button onClick={() => setBreakModalOpen(false)} className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">취소</button>
+                            <button onClick={handleBreak} className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium">신청</button>
+                            <button onClick={() => setBreakModalOpen(false)} className="flex-1 py-2 bg-gray-100 rounded-lg text-sm">취소</button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* System Status Banner */}
+            {/* System Status */}
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 mb-6 flex items-center gap-2">
                 <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                <span className="text-sm text-emerald-700 font-medium">시스템 정상 작동 중</span>
+                <span className="text-sm text-emerald-700 font-medium">시스템 정상</span>
             </div>
 
-            {/* Header */}
             <header className="mb-6">
                 <h1 className="text-2xl font-bold text-gray-800">수강생</h1>
-                <p className="text-gray-500 text-sm mt-1">수강생 조회 및 관리</p>
             </header>
 
-            {/* Alerts */}
-            {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-600 text-sm">
-                    ❌ {error}
-                    <button onClick={() => setError('')} className="float-right text-red-400 hover:text-red-600">✕</button>
-                </div>
-            )}
-            {success && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6 text-emerald-600 text-sm">
-                    ✅ {success}
-                </div>
-            )}
+            {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-red-600 text-sm">❌ {error}</div>}
+            {success && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-emerald-600 text-sm">✅ {success}</div>}
 
-            {/* Search & Filter */}
+            {/* Search & Stats */}
             <div className="flex gap-4 mb-6">
-                <div className="flex-1 relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
-                    <input
-                        type="text"
-                        placeholder="이름, 전화번호, 코치명 검색..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                </div>
-                <select
-                    value={filterStatus}
-                    onChange={(e) => setFilterStatus(e.target.value)}
-                    className="px-4 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600"
-                >
-                    <option value="all">전체 상태</option>
+                <input type="text" placeholder="검색..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 pl-4 pr-4 py-2 border rounded-lg text-sm" />
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-4 py-2 border rounded-lg text-sm">
+                    <option value="all">전체</option>
                     <option value="active">진행중</option>
                     <option value="pending">대기</option>
                     <option value="completed">종료</option>
-                    <option value="unassigned">미배정</option>
                 </select>
             </div>
 
-            {/* Stats Mini Cards */}
             <div className="flex gap-4 mb-6">
-                <div className="bg-white rounded-lg border border-gray-200 px-4 py-3 text-center min-w-[100px]">
-                    <div className="text-xl font-bold text-gray-800">{students.length}</div>
-                    <div className="text-xs text-gray-500">전체</div>
-                </div>
-                <div className="bg-emerald-50 rounded-lg border border-emerald-200 px-4 py-3 text-center min-w-[100px]">
-                    <div className="text-xl font-bold text-emerald-600">{activeCount}</div>
-                    <div className="text-xs text-emerald-600">진행중</div>
-                </div>
-                <div className="bg-amber-50 rounded-lg border border-amber-200 px-4 py-3 text-center min-w-[100px]">
-                    <div className="text-xl font-bold text-amber-600">{pendingCount}</div>
-                    <div className="text-xs text-amber-600">대기</div>
-                </div>
-                <div className="bg-gray-50 rounded-lg border border-gray-200 px-4 py-3 text-center min-w-[100px]">
-                    <div className="text-xl font-bold text-gray-500">{completedCount}</div>
-                    <div className="text-xs text-gray-500">종료</div>
-                </div>
+                <div className="bg-white border rounded-lg px-4 py-2 text-center"><div className="text-lg font-bold">{students.length}</div><div className="text-xs text-gray-500">전체</div></div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 text-center"><div className="text-lg font-bold text-emerald-600">{activeCount}</div><div className="text-xs text-emerald-600">진행중</div></div>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-center"><div className="text-lg font-bold text-amber-600">{pendingCount}</div><div className="text-xs text-amber-600">대기</div></div>
             </div>
 
-            {/* Table */}
-            {loading ? (
-                <div className="text-center text-gray-400 py-20">로딩 중...</div>
-            ) : (
-                <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="text-left text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100 bg-gray-50">
-                                <th className="px-4 py-3">이름</th>
-                                <th className="px-4 py-3">연락처</th>
-                                <th className="px-4 py-3">담당코치</th>
-                                <th className="px-4 py-3">수업시간</th>
-                                <th className="px-4 py-3">회차시작</th>
-                                <th className="px-4 py-3">상태</th>
-                                <th className="px-4 py-3">재결제</th>
-                                <th className="px-4 py-3">첫결제</th>
-                                <th className="px-4 py-3 text-right">액션</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                            {filteredStudents.map((student) => {
-                                const status = getSessionStatus(student);
-                                const isActive = status.label === '진행중';
-                                const isRepayment = (student.extension_count || 0) > 0;
+            {/* Student List */}
+            {loading ? <div className="text-center py-20 text-gray-400">로딩 중...</div> : (
+                <div className="space-y-2">
+                    {filteredStudents.map((student) => {
+                        const status = getSessionStatus(student);
+                        const isExpanded = expandedId === student.id;
+                        const isRepayment = (student.extension_count || 0) > 0;
+                        const isActive = status.label === '진행중';
 
-                                return (
-                                    <tr key={student.id} className="hover:bg-gray-50 transition-colors">
-                                        <td className="px-4 py-3 font-medium text-gray-800">
-                                            <Link href={`/students/${student.id}`} className="hover:text-emerald-600 hover:underline">
-                                                {student.name}
-                                            </Link>
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">{student.phone}</td>
-                                        <td className="px-4 py-3 text-gray-600">
-                                            {student.coach_name ? (
-                                                <span className="flex items-center gap-1">
-                                                    <span className="w-5 h-5 bg-emerald-100 rounded-full flex items-center justify-center text-xs">🧢</span>
-                                                    {student.coach_name}
-                                                </span>
-                                            ) : (
-                                                <span className="text-gray-400">-</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-600">
-                                            {student.day_of_week && student.start_time
-                                                ? `${student.day_of_week} ${student.start_time}`
-                                                : <span className="text-gray-400">-</span>}
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-600">
-                                            {student.start_date ? format(new Date(student.start_date), 'MM.dd') : '-'}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <span className={`px-2 py-1 rounded text-xs font-medium ${status.color}`}>
-                                                {status.label}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            {isRepayment ? (
-                                                <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-700">
-                                                    🔄 {student.extension_count}회
-                                                </span>
-                                            ) : (
-                                                <span className="text-gray-400 text-xs">신규</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-500 text-xs">
-                                            {student.first_start_date ? format(new Date(student.first_start_date), 'yy.MM.dd') : '-'}
-                                        </td>
-                                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                                            {isActive && (
-                                                <>
-                                                    <button onClick={() => openBreakModal(student)} className="text-amber-500 hover:underline mr-2 text-xs">휴강</button>
-                                                    <button onClick={() => handleCancel(student)} className="text-red-400 hover:underline text-xs">취소</button>
-                                                </>
-                                            )}
-                                            {!isActive && <span className="text-gray-300 text-xs">-</span>}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                            {filteredStudents.length === 0 && (
-                                <tr>
-                                    <td colSpan={9} className="px-4 py-12 text-center text-gray-400">
-                                        {searchTerm || filterStatus !== 'all' ? '검색 결과가 없습니다.' : '등록된 수강생이 없습니다.'}
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
+                        return (
+                            <div key={student.id} className="bg-white border rounded-xl overflow-hidden">
+                                {/* Header Row */}
+                                <div className={`px-4 py-3 flex items-center gap-4 cursor-pointer hover:bg-gray-50 ${isExpanded ? 'bg-gray-50 border-b' : ''}`} onClick={() => toggleExpand(student)}>
+                                    <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+                                    <span className="font-medium text-gray-800 w-20">{student.name}</span>
+                                    <span className="text-gray-500 font-mono text-xs w-28">{student.phone}</span>
+                                    <span className="text-gray-600 text-sm w-20">{student.coach_name || '-'}</span>
+                                    <span className="text-gray-600 text-sm w-28">{student.day_of_week} {student.start_time || ''}</span>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${status.color}`}>{status.label}</span>
+                                    {isRepayment && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">🔄 {student.extension_count}회</span>}
+                                    <span className="text-gray-400 text-xs ml-auto">{student.first_start_date ? format(new Date(student.first_start_date), 'yy.MM.dd') : '-'}</span>
+                                    {isActive && (
+                                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                                            <button onClick={() => { setBreakStudent(student); setBreakModalOpen(true); }} className="text-amber-500 text-xs hover:underline">휴강</button>
+                                            <button onClick={() => handleCancel(student)} className="text-red-400 text-xs hover:underline">취소</button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Expanded Details */}
+                                {isExpanded && (
+                                    <div className="p-4 bg-gray-50">
+                                        <div className="grid grid-cols-3 gap-4 mb-4">
+                                            <div className="bg-white p-3 rounded-lg border">
+                                                <h4 className="text-xs text-gray-500 mb-2">📋 기본 정보</h4>
+                                                <div className="text-sm space-y-1">
+                                                    <div>첫결제: {student.first_start_date ? format(new Date(student.first_start_date), 'yyyy.MM.dd') : '-'}</div>
+                                                    <div>현회차: {student.start_date ? format(new Date(student.start_date), 'M/d') : '-'} ~ {student.end_date ? format(new Date(student.end_date), 'M/d') : '-'}</div>
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-3 rounded-lg border">
+                                                <h4 className="text-xs text-gray-500 mb-2">📊 활동 로그</h4>
+                                                {logs.length > 0 ? (
+                                                    <div className="text-xs space-y-1 max-h-20 overflow-y-auto">
+                                                        {logs.slice(0, 3).map(log => (
+                                                            <div key={log.id} className="flex gap-2">
+                                                                <span className="text-gray-400">{format(new Date(log.created_at), 'MM.dd')}</span>
+                                                                <span className="px-1 bg-gray-100 rounded">{log.action_type}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : <div className="text-xs text-gray-400">기록 없음</div>}
+                                            </div>
+                                            <div className="bg-white p-3 rounded-lg border">
+                                                <h4 className="text-xs text-gray-500 mb-2">📌 메모</h4>
+                                                <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="메모..." className="w-full text-xs border rounded p-2 h-16 resize-none" />
+                                                <button onClick={() => saveMemo(student.id)} disabled={memoSaving} className="mt-1 text-xs px-2 py-1 bg-gray-100 rounded hover:bg-gray-200">
+                                                    {memoSaving ? '저장중...' : '저장'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                    {filteredStudents.length === 0 && <div className="text-center py-12 text-gray-400">수강생이 없습니다.</div>}
                 </div>
             )}
         </div>
