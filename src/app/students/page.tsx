@@ -18,6 +18,7 @@ interface Student {
     extension_count?: number;
     first_start_date?: string;
     total_sessions?: number;
+    has_memo?: boolean; // NEW
 }
 
 interface Session {
@@ -125,6 +126,10 @@ export default function StudentsPage() {
             if (data.success) {
                 setOriginalMemo(memo);
                 setMemoSaved(true);
+                // Update local student state to reflect memo existence
+                setStudents(prev => prev.map(s =>
+                    s.id === studentId ? { ...s, has_memo: !!memo } : s
+                ));
                 setTimeout(() => setMemoSaved(false), 3000);
             }
         } catch (e) {
@@ -258,8 +263,11 @@ export default function StudentsPage() {
                                 >
                                     <span className="text-gray-400 text-sm w-5">{isExpanded ? '▼' : '▶'}</span>
 
-                                    <div className="w-28">
+                                    <div className="w-28 flex items-center gap-1">
                                         <div className="font-semibold text-gray-800">{student.name}</div>
+                                        {student.has_memo && <span className="text-xs" title="메모 있음">📝</span>}
+                                    </div>
+                                    <div className="w-28">
                                         <div className="text-xs text-gray-400 font-mono">{student.phone}</div>
                                     </div>
 

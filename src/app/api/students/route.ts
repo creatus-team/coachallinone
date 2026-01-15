@@ -16,7 +16,8 @@ export async function GET() {
                 s.end_date,
                 COALESCE(s.extension_count, 0) as extension_count,
                 (SELECT MIN(start_date) FROM sessions WHERE user_id = u.id) as first_start_date,
-                (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as total_sessions
+                (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as total_sessions,
+                EXTISTS(SELECT 1 FROM user_memos WHERE user_id = u.id AND content != '') as has_memo
             FROM users u
             LEFT JOIN sessions s ON u.id = s.user_id 
                 AND s.id = (SELECT id FROM sessions WHERE user_id = u.id ORDER BY end_date DESC LIMIT 1)
