@@ -14,26 +14,18 @@ export async function GET() {
                 s.start_time,
                 s.start_date,
                 s.end_date,
-                s.extension_count,
-                first_session.first_start_date,
+                COALESCE(s.extension_count, 0) as extension_count,
+                (SELECT MIN(start_date) FROM sessions WHERE user_id = u.id) as first_start_date,
                 (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as total_sessions
             FROM users u
-            LEFT JOIN LATERAL (
-                SELECT * FROM sessions 
-                WHERE user_id = u.id 
-                ORDER BY end_date DESC 
-                LIMIT 1
-            ) s ON true
+            LEFT JOIN sessions s ON u.id = s.user_id 
+                AND s.id = (SELECT id FROM sessions WHERE user_id = u.id ORDER BY end_date DESC LIMIT 1)
             LEFT JOIN coaches c ON s.coach_id = c.id
-            LEFT JOIN LATERAL (
-                SELECT MIN(start_date) as first_start_date 
-                FROM sessions 
-                WHERE user_id = u.id
-            ) first_session ON true
             ORDER BY u.created_at DESC
         `);
         return NextResponse.json({ success: true, students: res.rows });
     } catch (error: any) {
+        console.error('Students API Error:', error);
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 }
@@ -77,13 +69,8 @@ export async function DELETE(request: Request) {
             return NextResponse.json({ success: false, error: 'ID가 필요합니다' }, { status: 400 });
         }
 
-        // First delete associated sessions
         await query('DELETE FROM sessions WHERE user_id = $1', [id]);
-
-        // Update slots to be available again
         await query('UPDATE coach_slots SET is_available = true, assigned_user_id = NULL WHERE assigned_user_id = $1', [id]);
-
-        // Then delete the user
         const res = await query('DELETE FROM users WHERE id = $1 RETURNING *', [id]);
 
         if (res.rows.length === 0) {
