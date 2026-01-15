@@ -19,6 +19,7 @@ const navItems: NavItem[] = [
     { href: '/webhooks', label: '웹훅 로그', icon: '📦' },
     { href: '/stats', label: '통계', icon: '📊' },
     { href: '/settlements', label: '정산', icon: '💰' },
+    { href: '/admin/sync-status', label: '연동 현황', icon: '📡' },
 ];
 
 export default function Sidebar() {
