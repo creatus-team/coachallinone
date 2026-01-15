@@ -10,7 +10,6 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-    { href: '/', label: '홈', icon: '🏠' },
     { href: '/students', label: '수강생', icon: '👥' },
     { href: '/coaches', label: '코치', icon: '🧢' },
     { href: '/slots', label: '슬롯', icon: '⏰' },
@@ -28,12 +27,12 @@ export default function Sidebar() {
         <aside className="fixed left-0 top-0 h-full w-56 bg-white border-r border-gray-200 flex flex-col z-50">
             {/* Logo */}
             <div className="p-5 border-b border-gray-100">
-                <div className="flex items-center gap-2">
+                <Link href="/students" className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
                         <span className="text-white text-sm font-bold">C</span>
                     </div>
                     <span className="font-bold text-gray-800">크리투스 코칭</span>
-                </div>
+                </Link>
             </div>
 
             {/* Navigation */}
@@ -41,7 +40,8 @@ export default function Sidebar() {
                 <ul className="space-y-1">
                     {navItems.map((item) => {
                         const isActive = pathname === item.href ||
-                            (item.href !== '/' && pathname.startsWith(item.href));
+                            (item.href !== '/students' && pathname.startsWith(item.href)) ||
+                            (item.href === '/students' && (pathname === '/students' || pathname.startsWith('/students/')));
 
                         return (
                             <li key={item.href}>

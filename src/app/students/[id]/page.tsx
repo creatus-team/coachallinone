@@ -2,12 +2,13 @@ import { query } from '@/lib/db';
 import { notFound } from 'next/navigation';
 import { format } from 'date-fns';
 import Link from 'next/link';
+import StudentMemo from './StudentMemo';
 
 export const dynamic = 'force-dynamic';
 
 async function getStudentDetail(id: string) {
     try {
-        // 기본 정보
+        // 기본 정보 + 확장 정보
         const userRes = await query(`
             SELECT u.*, 
                 s.id as session_id,
@@ -16,10 +17,15 @@ async function getStudentDetail(id: string) {
                 s.start_time,
                 s.start_date,
                 s.end_date,
+                s.extension_count,
                 c.name as coach_name,
-                c.phone as coach_phone
+                c.phone as coach_phone,
+                (SELECT MIN(start_date) FROM sessions WHERE user_id = u.id) as first_start_date,
+                (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as total_sessions
             FROM users u
-            LEFT JOIN sessions s ON u.id = s.user_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM sessions WHERE user_id = u.id ORDER BY end_date DESC LIMIT 1
+            ) s ON true
             LEFT JOIN coaches c ON s.coach_id = c.id
             WHERE u.id = $1
         `, [id]);
@@ -28,13 +34,12 @@ async function getStudentDetail(id: string) {
 
         const user = userRes.rows[0];
 
-        // 활동 로그 (발송 이력)
-        const logsRes = await query(`
-            SELECT * FROM message_logs
-            WHERE recipient_phone = $1 OR recipient_name = $2
-            ORDER BY sent_at DESC
-            LIMIT 20
-        `, [user.phone, user.name]);
+        // 활동 로그
+        const activityRes = await query(`
+            SELECT * FROM user_activity_logs
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+        `, [id]);
 
         // 휴강 이력
         const breaksRes = await query(`
@@ -43,10 +48,28 @@ async function getStudentDetail(id: string) {
             ORDER BY created_at DESC
         `, [user.session_id || 0]);
 
+        // 메모
+        const memoRes = await query(`
+            SELECT * FROM user_memos
+            WHERE user_id = $1
+            LIMIT 1
+        `, [id]);
+
+        // 세션 이력 (코치/시간대 변경 추적용)
+        const sessionsRes = await query(`
+            SELECT s.*, c.name as coach_name 
+            FROM sessions s 
+            LEFT JOIN coaches c ON s.coach_id = c.id
+            WHERE s.user_id = $1 
+            ORDER BY s.start_date DESC
+        `, [id]);
+
         return {
             user,
-            logs: logsRes.rows,
-            breaks: breaksRes.rows
+            activityLogs: activityRes.rows,
+            breaks: breaksRes.rows,
+            memo: memoRes.rows[0] || null,
+            sessions: sessionsRes.rows
         };
     } catch (e: any) {
         console.error('Error:', e.message);
@@ -62,7 +85,7 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
         notFound();
     }
 
-    const { user, logs, breaks } = data;
+    const { user, activityLogs, breaks, memo, sessions } = data;
 
     // 세션 상태 계산
     const today = new Date();
@@ -72,83 +95,85 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
         const end = new Date(user.end_date);
         if (start > today) sessionStatus = '대기';
         else if (end < today) sessionStatus = '종료';
-        else sessionStatus = '진행 중';
+        else sessionStatus = '진행중';
     }
 
+    const isRepayment = (user.extension_count || 0) > 0;
+
     return (
-        <div className="p-8">
+        <div className="p-8 max-w-6xl">
             {/* Header */}
             <header className="mb-6 flex justify-between items-center">
                 <div>
                     <Link href="/students" className="text-gray-400 hover:text-gray-600 text-sm">
                         ← 수강생 목록
                     </Link>
-                    <h1 className="text-2xl font-bold text-gray-800 mt-2">{user.name}</h1>
-                    <p className="text-gray-500 text-sm">{user.phone}</p>
+                    <h1 className="text-2xl font-bold text-gray-800 mt-2 flex items-center gap-3">
+                        {user.name}
+                        {isRepayment && (
+                            <span className="px-2 py-1 bg-purple-100 text-purple-700 text-sm rounded font-medium">
+                                🔄 재결제 {user.extension_count}회
+                            </span>
+                        )}
+                    </h1>
+                    <p className="text-gray-500 text-sm font-mono">{user.phone}</p>
                 </div>
                 <div>
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${sessionStatus === '진행 중' ? 'bg-emerald-100 text-emerald-600' :
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${sessionStatus === '진행중' ? 'bg-emerald-100 text-emerald-600' :
                             sessionStatus === '대기' ? 'bg-amber-100 text-amber-600' :
-                                sessionStatus === '종료' ? 'bg-gray-100 text-gray-500' :
-                                    'bg-gray-100 text-gray-500'
+                                'bg-gray-100 text-gray-500'
                         }`}>
                         {sessionStatus}
                     </span>
                 </div>
             </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* 기본 정보 */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
                     <h2 className="font-semibold text-gray-800 mb-4">📋 기본 정보</h2>
-                    <dl className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <dt className="text-gray-500">이름</dt>
-                            <dd className="font-medium text-gray-800">{user.name}</dd>
+                    <dl className="space-y-3 text-sm">
+                        <div className="flex justify-between">
+                            <dt className="text-gray-500">첫 결제일</dt>
+                            <dd className="font-medium text-gray-800">
+                                {user.first_start_date ? format(new Date(user.first_start_date), 'yyyy.MM.dd') : '-'}
+                            </dd>
                         </div>
-                        <div>
-                            <dt className="text-gray-500">연락처</dt>
-                            <dd className="font-medium text-gray-800 font-mono">{user.phone}</dd>
+                        <div className="flex justify-between">
+                            <dt className="text-gray-500">총 결제 횟수</dt>
+                            <dd className="font-medium text-gray-800">{user.total_sessions || 1}회</dd>
                         </div>
-                        <div>
-                            <dt className="text-gray-500">등록일</dt>
+                        <div className="flex justify-between">
+                            <dt className="text-gray-500">가입일</dt>
                             <dd className="font-medium text-gray-800">
                                 {user.created_at ? format(new Date(user.created_at), 'yyyy.MM.dd') : '-'}
                             </dd>
-                        </div>
-                        <div>
-                            <dt className="text-gray-500">상품 유형</dt>
-                            <dd className="font-medium text-gray-800">{user.product_type || '-'}</dd>
                         </div>
                     </dl>
                 </div>
 
                 {/* 코칭 정보 */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                    <h2 className="font-semibold text-gray-800 mb-4">🧢 코칭 정보</h2>
+                    <h2 className="font-semibold text-gray-800 mb-4">🧢 현재 코칭</h2>
                     {user.coach_name ? (
-                        <dl className="grid grid-cols-2 gap-4 text-sm">
-                            <div>
+                        <dl className="space-y-3 text-sm">
+                            <div className="flex justify-between">
                                 <dt className="text-gray-500">담당 코치</dt>
                                 <dd className="font-medium text-gray-800">{user.coach_name}</dd>
                             </div>
-                            <div>
-                                <dt className="text-gray-500">코치 연락처</dt>
-                                <dd className="font-medium text-gray-800 font-mono">{user.coach_phone}</dd>
-                            </div>
-                            <div>
+                            <div className="flex justify-between">
                                 <dt className="text-gray-500">수업 시간</dt>
                                 <dd className="font-medium text-gray-800">{user.day_of_week} {user.start_time}</dd>
                             </div>
-                            <div>
-                                <dt className="text-gray-500">코칭 기간</dt>
+                            <div className="flex justify-between">
+                                <dt className="text-gray-500">현재 회차</dt>
                                 <dd className="font-medium text-gray-800">
                                     {user.start_date ? format(new Date(user.start_date), 'M/d') : '-'} ~ {user.end_date ? format(new Date(user.end_date), 'M/d') : '-'}
                                 </dd>
                             </div>
                         </dl>
                     ) : (
-                        <div className="text-center text-gray-400 py-6">코치가 배정되지 않았습니다</div>
+                        <div className="text-center text-gray-400 py-4">코치 미배정</div>
                     )}
                 </div>
 
@@ -157,90 +182,48 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
                     <h2 className="font-semibold text-gray-800 mb-4">⏸️ 휴강 이력</h2>
                     {breaks.length > 0 ? (
                         <div className="space-y-2">
-                            {breaks.map((b: any) => (
-                                <div key={b.id} className="flex justify-between items-center p-3 bg-amber-50 rounded-lg border border-amber-200">
-                                    <div>
-                                        <span className="font-medium text-amber-800">{b.break_weeks}주 휴강</span>
-                                        <span className="text-amber-600 text-sm ml-2">{b.reason || '사유 없음'}</span>
-                                    </div>
-                                    <span className="text-amber-500 text-xs">
-                                        {b.created_at ? format(new Date(b.created_at), 'yy.MM.dd') : '-'}
+                            {breaks.slice(0, 3).map((b: any) => (
+                                <div key={b.id} className="p-2 bg-amber-50 rounded border border-amber-200 text-sm">
+                                    <span className="font-medium text-amber-800">{b.break_weeks}주</span>
+                                    <span className="text-amber-600 ml-2">{b.reason || '-'}</span>
+                                    <span className="text-amber-400 text-xs float-right">
+                                        {b.created_at ? format(new Date(b.created_at), 'yy.MM.dd') : ''}
                                     </span>
                                 </div>
                             ))}
                         </div>
                     ) : (
-                        <div className="text-center text-gray-400 py-6">휴강 이력 없음</div>
+                        <div className="text-center text-gray-400 py-4">없음</div>
                     )}
-                </div>
-
-                {/* 결제 정보 */}
-                <div className="bg-white rounded-xl border border-gray-200 p-6">
-                    <h2 className="font-semibold text-gray-800 mb-4">💳 결제 정보</h2>
-                    <dl className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <dt className="text-gray-500">최초 결제일</dt>
-                            <dd className="font-medium text-gray-800">
-                                {user.created_at ? format(new Date(user.created_at), 'yyyy.MM.dd') : '-'}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt className="text-gray-500">수강 종료일</dt>
-                            <dd className="font-medium text-gray-800">
-                                {user.end_date ? format(new Date(user.end_date), 'yyyy.MM.dd') : '-'}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt className="text-gray-500">재결제 여부</dt>
-                            <dd className="font-medium text-gray-800">
-                                {/* 추후 구현 필요 */}
-                                -
-                            </dd>
-                        </div>
-                        <div>
-                            <dt className="text-gray-500">상태</dt>
-                            <dd className={`font-medium ${sessionStatus === '진행 중' ? 'text-emerald-600' :
-                                    sessionStatus === '종료' ? 'text-gray-500' : 'text-amber-600'
-                                }`}>
-                                {sessionStatus}
-                            </dd>
-                        </div>
-                    </dl>
                 </div>
             </div>
 
-            {/* 활동 로그 */}
+            {/* 세션 변경 이력 */}
             <div className="bg-white rounded-xl border border-gray-200 mt-6">
                 <div className="px-6 py-4 border-b border-gray-100">
-                    <h2 className="font-semibold text-gray-800">📝 활동 로그 (발송 이력)</h2>
+                    <h2 className="font-semibold text-gray-800">📊 코칭 이력 (코치/시간대 변화)</h2>
                 </div>
-                {logs.length > 0 ? (
+                {sessions.length > 0 ? (
                     <table className="w-full text-sm">
                         <thead>
-                            <tr className="text-left text-gray-500 text-xs uppercase tracking-wider border-b border-gray-100 bg-gray-50">
-                                <th className="px-6 py-3">시간</th>
-                                <th className="px-6 py-3">유형</th>
-                                <th className="px-6 py-3">내용</th>
-                                <th className="px-6 py-3">상태</th>
+                            <tr className="text-left text-gray-500 text-xs uppercase border-b border-gray-100 bg-gray-50">
+                                <th className="px-6 py-3">기간</th>
+                                <th className="px-6 py-3">코치</th>
+                                <th className="px-6 py-3">시간대</th>
+                                <th className="px-6 py-3">연장</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
-                            {logs.map((log: any) => (
-                                <tr key={log.id} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 text-gray-600 font-mono text-xs">
-                                        {log.sent_at ? format(new Date(log.sent_at), 'MM/dd HH:mm') : '-'}
+                            {sessions.map((s: any, idx: number) => (
+                                <tr key={s.id} className={idx === 0 ? 'bg-emerald-50' : 'hover:bg-gray-50'}>
+                                    <td className="px-6 py-3 text-gray-600">
+                                        {s.start_date ? format(new Date(s.start_date), 'yy.MM.dd') : '-'} ~ {s.end_date ? format(new Date(s.end_date), 'MM.dd') : '-'}
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <span className="bg-emerald-50 text-emerald-600 px-2 py-1 rounded text-xs">
-                                            {log.type || '알림'}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 text-gray-600 max-w-xs truncate">{log.content}</td>
-                                    <td className="px-6 py-4">
-                                        {log.status === 'FAILED' ? (
-                                            <span className="text-red-500 text-xs">실패</span>
-                                        ) : (
-                                            <span className="text-emerald-500 text-xs">성공</span>
+                                    <td className="px-6 py-3 font-medium text-gray-800">{s.coach_name || '-'}</td>
+                                    <td className="px-6 py-3 text-gray-600">{s.day_of_week} {s.start_time}</td>
+                                    <td className="px-6 py-3">
+                                        {s.extension_count > 0 && (
+                                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">+{s.extension_count}</span>
                                         )}
                                     </td>
                                 </tr>
@@ -248,9 +231,51 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
                         </tbody>
                     </table>
                 ) : (
-                    <div className="text-center text-gray-400 py-12">발송 이력이 없습니다</div>
+                    <div className="text-center text-gray-400 py-8">세션 기록 없음</div>
                 )}
             </div>
+
+            {/* 활동 로그 */}
+            <div className="bg-white rounded-xl border border-gray-200 mt-6">
+                <div className="px-6 py-4 border-b border-gray-100">
+                    <h2 className="font-semibold text-gray-800">📝 활동 로그</h2>
+                </div>
+                {activityLogs.length > 0 ? (
+                    <div className="divide-y divide-gray-50">
+                        {activityLogs.map((log: any) => (
+                            <div key={log.id} className="px-6 py-3 flex items-center gap-4">
+                                <span className="text-xs text-gray-400 w-24">
+                                    {log.created_at ? format(new Date(log.created_at), 'MM.dd HH:mm') : '-'}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${log.action_type === 'BREAK' ? 'bg-amber-100 text-amber-700' :
+                                        log.action_type === 'COACH_CHANGE' ? 'bg-blue-100 text-blue-700' :
+                                            log.action_type === 'TIME_CHANGE' ? 'bg-purple-100 text-purple-700' :
+                                                log.action_type === 'CANCEL' ? 'bg-red-100 text-red-700' :
+                                                    log.action_type === 'EXTENSION' ? 'bg-green-100 text-green-700' :
+                                                        'bg-gray-100 text-gray-700'
+                                    }`}>
+                                    {log.action_type === 'BREAK' ? '휴강' :
+                                        log.action_type === 'COACH_CHANGE' ? '코치변경' :
+                                            log.action_type === 'TIME_CHANGE' ? '시간변경' :
+                                                log.action_type === 'CANCEL' ? '취소' :
+                                                    log.action_type === 'EXTENSION' ? '기간연장' :
+                                                        log.action_type}
+                                </span>
+                                <span className="text-sm text-gray-600 flex-1">
+                                    {log.old_value && log.new_value ? (
+                                        <>{log.old_value} → {log.new_value}</>
+                                    ) : log.new_value || log.reason || '-'}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-center text-gray-400 py-8">아직 기록된 활동이 없습니다</div>
+                )}
+            </div>
+
+            {/* 특이사항 메모 */}
+            <StudentMemo userId={id} initialMemo={memo?.content || ''} />
         </div>
     );
 }

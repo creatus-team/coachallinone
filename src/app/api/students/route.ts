@@ -1,24 +1,37 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
-// GET: 수강생 목록 조회
+// GET: 수강생 목록 조회 (확장된 정보 포함)
 export async function GET() {
     try {
         const res = await query(`
-      SELECT 
-        u.*,
-        s.id as session_id,
-        s.coach_id,
-        c.name as coach_name,
-        s.day_of_week,
-        s.start_time,
-        s.start_date,
-        s.end_date
-      FROM users u
-      LEFT JOIN sessions s ON u.id = s.user_id
-      LEFT JOIN coaches c ON s.coach_id = c.id
-      ORDER BY u.created_at DESC
-    `);
+            SELECT 
+                u.*,
+                s.id as session_id,
+                s.coach_id,
+                c.name as coach_name,
+                s.day_of_week,
+                s.start_time,
+                s.start_date,
+                s.end_date,
+                s.extension_count,
+                first_session.first_start_date,
+                (SELECT COUNT(*) FROM sessions WHERE user_id = u.id) as total_sessions
+            FROM users u
+            LEFT JOIN LATERAL (
+                SELECT * FROM sessions 
+                WHERE user_id = u.id 
+                ORDER BY end_date DESC 
+                LIMIT 1
+            ) s ON true
+            LEFT JOIN coaches c ON s.coach_id = c.id
+            LEFT JOIN LATERAL (
+                SELECT MIN(start_date) as first_start_date 
+                FROM sessions 
+                WHERE user_id = u.id
+            ) first_session ON true
+            ORDER BY u.created_at DESC
+        `);
         return NextResponse.json({ success: true, students: res.rows });
     } catch (error: any) {
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
