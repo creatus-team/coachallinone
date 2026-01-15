@@ -2,20 +2,14 @@ import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
 /**
- * 📥 Sheet Ingest API (무조건 수용 버전)
- * 원칙: 일단 다 받고, 나중에 분류한다.
- * - 모든 데이터 무조건 저장
- * - 처리 시도 후 실패해도 저장 유지
- * - 실패 시 'NEEDS_ATTENTION' 상태로 관리자 알림
+ * 🔄 재처리 API
+ * POST /api/ingest/retry
+ * Body: { rawId: number }
+ * 
+ * raw_webhooks에서 해당 ID의 데이터를 다시 처리 시도
  */
 
 export async function POST(request: Request) {
-    // 1. 보안 인증
-    const apiKey = request.headers.get('x-api-key');
-    if (apiKey !== process.env.CRITUS_API_KEY && apiKey !== 'critus-secret-key-2026') {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
     let body: any;
     try {
         body = await request.json();
@@ -23,41 +17,23 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    console.log('[Sheet Ingest] Received:', body);
-
-    // 2. 무조건 저장 (이게 핵심!)
-    let rawId: number;
-    try {
-        const insertRes = await query(`
-            INSERT INTO raw_webhooks (source, payload, status)
-            VALUES ($1, $2, 'RECEIVED')
-            RETURNING id
-        `, ['google_sheet', body]);
-
-        rawId = insertRes.rows[0].id;
-        console.log(`[Sheet Ingest] Saved as raw_webhook #${rawId}`);
-    } catch (dbError) {
-        console.error('[Sheet Ingest] DB Save Error:', dbError);
-        return NextResponse.json({ error: 'DB Error' }, { status: 500 });
+    const { rawId } = body;
+    if (!rawId) {
+        return NextResponse.json({ error: 'rawId is required' }, { status: 400 });
     }
 
-    // 3. 여기서 무조건 SUCCESS 응답! (엑셀은 성공으로 표시됨)
-    // 처리는 비동기로 시도하되, 실패해도 엑셀엔 영향 없음
+    // 1. 해당 raw_webhook 조회
+    const webhookRes = await query(`SELECT * FROM raw_webhooks WHERE id = $1`, [rawId]);
+    if (webhookRes.rows.length === 0) {
+        return NextResponse.json({ error: 'Webhook not found' }, { status: 404 });
+    }
 
-    // 비동기 처리 시도 (응답 후 실행)
-    processInBackground(rawId, body).catch(err => {
-        console.error(`[Sheet Ingest] Background processing failed for #${rawId}:`, err);
-    });
+    const webhook = webhookRes.rows[0];
+    const payload = typeof webhook.payload === 'string' ? JSON.parse(webhook.payload) : webhook.payload;
+    const { name, phone, option } = payload;
 
-    return NextResponse.json({ success: true, rawId, message: '데이터 수신 완료' });
-}
-
-// --- 백그라운드 처리 ---
-async function processInBackground(rawId: number, body: any) {
-    const { name, phone, option } = body;
-
+    // 2. 재처리 시도
     try {
-        // 분류 로직
         let isRepayment = false;
         if (String(option).includes("재결제")) {
             isRepayment = true;
@@ -72,21 +48,17 @@ async function processInBackground(rawId: number, body: any) {
         }
 
         // 성공!
-        await query(`UPDATE raw_webhooks SET status = 'PROCESSED', processed_at = NOW() WHERE id = $1`, [rawId]);
-        console.log(`[Sheet Ingest] #${rawId} processed successfully`);
+        await query(`UPDATE raw_webhooks SET status = 'PROCESSED', processed_at = NOW(), error_log = NULL WHERE id = $1`, [rawId]);
+        return NextResponse.json({ success: true, message: '재처리 성공!' });
 
-    } catch (logicError: any) {
-        // 실패해도 데이터는 이미 저장됨 → 관리자가 나중에 처리 가능
-        console.error(`[Sheet Ingest] #${rawId} processing failed:`, logicError.message);
-        await query(`
-            UPDATE raw_webhooks 
-            SET status = 'NEEDS_ATTENTION', error_log = $2 
-            WHERE id = $1
-        `, [rawId, logicError.message]);
+    } catch (error: any) {
+        // 여전히 실패
+        await query(`UPDATE raw_webhooks SET error_log = $2 WHERE id = $1`, [rawId, error.message]);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 }
 
-// --- Logic Functions ---
+// --- Logic Functions (재사용) ---
 
 function parseOption(optionStr: string) {
     if (!optionStr) return null;
@@ -142,13 +114,9 @@ async function handleNewEnrollment(name: string, phone: string, option: string) 
         UPDATE coach_slots SET is_available = false, assigned_user_id = $1 
         WHERE coach_id = $2 AND day_of_week = $3 AND start_time = $4
     `, [userId, coach.id, parsed.day, parsed.time]);
-
-    console.log(`[New Enrollment] Success: ${name} -> ${parsed.coach}`);
 }
 
 async function handleRepayment(name: string, phone: string, option: string) {
-    console.log(`[Repayment] Processing: ${name} (${phone})`);
-
     const userRes = await query(`SELECT id, name FROM users WHERE phone = $1`, [phone]);
     if (userRes.rows.length === 0) throw new Error(`재결제 사용자 없음: ${phone}`);
     const userId = userRes.rows[0].id;
@@ -170,6 +138,4 @@ async function handleRepayment(name: string, phone: string, option: string) {
         SET end_date = $1, status = 'active', extension_count = COALESCE(extension_count, 0) + 1
         WHERE id = $2
     `, [newEndDate, lastSession.id]);
-
-    console.log(`[Repayment] Extended to ${newEndDate.toISOString()}`);
 }
