@@ -49,9 +49,9 @@ export async function POST(request: Request) {
         }
 
         if (isRepayment) {
-            await handleRepayment(name, phone, option);
+            await handleRepayment(name, normalizePhone(phone), option);
         } else {
-            await handleNewEnrollment(name, phone, option);
+            await handleNewEnrollment(name, normalizePhone(phone), option);
         }
 
         // 성공!
@@ -66,6 +66,13 @@ export async function POST(request: Request) {
 }
 
 // --- Logic Functions (재사용) ---
+
+function normalizePhone(phone: string) {
+    if (!phone) return '';
+    let p = String(phone).replace(/[^0-9]/g, '');
+    if (p.startsWith('10') && p.length === 10) p = '0' + p;
+    return p;
+}
 
 function parseOption(optionStr: string) {
     if (!optionStr) return null;
@@ -96,7 +103,12 @@ async function handleNewEnrollment(name: string, phone: string, option: string) 
         const targetDay = dayMap[dayName.replace('요일', '')];
         const result = new Date(date);
         result.setDate(date.getDate() + ((7 + targetDay - date.getDay()) % 7));
-        if (result.getDay() === date.getDay()) result.setDate(result.getDate() + 7);
+
+        // 만약 시작일이 3일 이내라면 다음주로 미룸 (준비 시간 확보)
+        const diffDays = (result.getTime() - date.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays < 3) {
+            result.setDate(result.getDate() + 7);
+        }
         return result;
     };
     const today = new Date();
