@@ -14,10 +14,10 @@ const navItems: NavItem[] = [
     { href: '/coaches', label: '코치', icon: '🧢' },
     { href: '/slots', label: '슬롯', icon: '⏰' },
     { href: '/messages', label: '문자', icon: '✉️' },
-    { href: '/alerts', label: '알림', icon: '🚨' },
+    // { href: '/alerts', label: '알림', icon: '🚨' },
     { href: '/admin/sync-status', label: '연동 현황', icon: '📡' },
-    { href: '/stats', label: '통계', icon: '📊' },
-    { href: '/settlements', label: '정산', icon: '💰' },
+    // { href: '/stats', label: '통계', icon: '📊' },
+    // { href: '/settlements', label: '정산', icon: '💰' },
 ];
 
 export default function Sidebar() {
