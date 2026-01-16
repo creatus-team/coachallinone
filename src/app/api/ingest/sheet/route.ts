@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { z } from 'zod';
 
-/**
- * 📥 Sheet Ingest API (무조건 수용 버전)
- * 원칙: 일단 다 받고, 나중에 분류한다.
- * - 모든 데이터 무조건 저장
- * - 처리 시도 후 실패해도 저장 유지
- * - 실패 시 'NEEDS_ATTENTION' 상태로 관리자 알림
- */
+// Zod Schema for Sheet Payload
+const SheetPayloadSchema = z.object({
+    name: z.string().min(1, "이름 필수"),
+    phone: z.string().min(1, "전화번호 필수"),
+    option: z.string().min(1, "옵션 필수 (코치/요일/시간)"),
+}).catchall(z.any()); // Allow other fields (like source info)
 
 export async function POST(request: Request) {
     // 1. 보안 인증
@@ -41,15 +41,28 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'DB Error' }, { status: 500 });
     }
 
-    // 3. 여기서 무조건 SUCCESS 응답! (엑셀은 성공으로 표시됨)
-    // 처리는 비동기로 시도하되, 실패해도 엑셀엔 영향 없음
+    // 3. 데이터 검증 (Validation)
+    const validation = SheetPayloadSchema.safeParse(body);
+    if (!validation.success) {
+        const errorMsg = `Validation Failed: ${validation.error.message}`;
+        console.warn(`[Sheet Ingest] #${rawId} Invalid Payload:`, errorMsg);
 
-    // 비동기 처리 시도 (응답 후 실행)
+        // 유효하지 않은 데이터는 'NEEDS_ATTENTION'으로 마킹하고 처리 중단
+        await query(`
+            UPDATE raw_webhooks 
+            SET status = 'NEEDS_ATTENTION', error_log = $2, processed_at = NOW()
+            WHERE id = $1
+        `, [rawId, errorMsg]);
+
+        return NextResponse.json({ success: true, warning: 'Invalid payload saved', rawId });
+    }
+
+    // 4. 비동기 처리 시도 (검증 통과한 경우만)
     processInBackground(rawId, body).catch(err => {
         console.error(`[Sheet Ingest] Background processing failed for #${rawId}:`, err);
     });
 
-    return NextResponse.json({ success: true, rawId, message: '데이터 수신 완료' });
+    return NextResponse.json({ success: true, rawId, message: '데이터 수신 및 검증 완료' });
 }
 
 // --- 백그라운드 처리 ---
@@ -95,6 +108,81 @@ async function processInBackground(rawId: number, body: any) {
 }
 
 // --- Logic Functions ---
+
+async function handleCancellation(name: string, phone: string, rawId: number) {
+    // 1. Ensure Table Exists
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_activity_logs (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          action_type VARCHAR(50) NOT NULL,
+          old_value TEXT,
+          new_value TEXT,
+          reason TEXT,
+          created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // 2. Find User
+    const userRes = await query('SELECT * FROM users WHERE phone = $1', [phone]);
+    if (userRes.rows.length === 0) {
+        throw new Error(`취소 처리 대상 없음: ${name} (${phone})`);
+    }
+    const user = userRes.rows[0];
+
+    // 3. Find Active Session
+    const sessionRes = await query(`
+        SELECT s.*, c.name as coach_name
+        FROM sessions s
+        LEFT JOIN coaches c ON s.coach_id = c.id
+        WHERE s.user_id = $1 AND s.end_date >= NOW()
+        ORDER BY s.end_date DESC LIMIT 1
+    `, [user.id]);
+
+    let logMessage = "결제 취소 감지됨 (세션 없음)";
+    // let coachName = "알수없음"; // SMS Not Used due to exclusion
+
+    if (sessionRes.rows.length > 0) {
+        const session = sessionRes.rows[0];
+        // coachName = session.coach_name;
+
+        // 4. Terminate Session (Set end_date to yesterday)
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        await query(`
+            UPDATE sessions 
+            SET end_date = $1 
+            WHERE id = $2
+        `, [yesterday, session.id]);
+
+        // 5. Free up the slot
+        await query(`
+            UPDATE coach_slots 
+            SET is_available = true, assigned_user_id = NULL 
+            WHERE assigned_user_id = $1
+        `, [user.id]);
+
+        logMessage = `세션 종료 및 슬롯 개방 완료 (담당: ${session.coach_name})`;
+        console.log(`[Cancellation] Session terminated and slots freed for user ${user.id}`);
+    }
+
+    // 6. Log Activity
+    await query(`
+        INSERT INTO user_activity_logs (user_id, action_type, reason)
+        VALUES ($1, 'CANCEL', $2)
+    `, [user.id, '결제 취소/환불로 인한 자동 종료']);
+
+    // 7. Notify Admin (SKIPPED as per User Request "SMS 배제")
+    // await notifyAdmin(`[취소처리] ${name} (${coachName}) - ${logMessage}`);
+
+    // 8. Mark Webhook
+    await query(`
+        UPDATE raw_webhooks 
+        SET status = 'PROCESSED', error_log = '취소 처리 완료' 
+        WHERE id = $1
+    `, [rawId]);
+}
 
 function normalizePhone(phone: string) {
     if (!phone) return '';
@@ -171,6 +259,12 @@ async function handleNewEnrollment(name: string, phone: string, option: string) 
         WHERE coach_id = $2 AND day_of_week = $3 AND start_time = $4
     `, [userId, coach.id, parsed.day, parsed.time]);
 
+    // Log Activity (NEW)
+    await query(`
+        INSERT INTO user_activity_logs (user_id, action_type, reason)
+        VALUES ($1, 'ENROLL', $2)
+    `, [userId, `신규 수강 신청 (담당: ${parsed.coach})`]);
+
     console.log(`[New Enrollment] Success: ${name} -> ${parsed.coach}`);
 }
 
@@ -198,6 +292,12 @@ async function handleRepayment(name: string, phone: string, option: string) {
         SET end_date = $1, extension_count = COALESCE(extension_count, 0) + 1
         WHERE id = $2
     `, [newEndDate, lastSession.id]);
+
+    // Log Activity (NEW)
+    await query(`
+        INSERT INTO user_activity_logs (user_id, action_type, reason)
+        VALUES ($1, 'RENEWAL', $2)
+    `, [userId, `재결제 4주 연장 (종료일: ${newEndDate.toISOString().split('T')[0]})`]);
 
     console.log(`[Repayment] Extended to ${newEndDate.toISOString()}`);
 }

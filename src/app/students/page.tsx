@@ -60,8 +60,7 @@ export default function StudentsPage() {
     const [expandedId, setExpandedId] = useState<number | null>(null);
     const [sessions, setSessions] = useState<Session[]>([]);
     const [logs, setLogs] = useState<any[]>([]);
-    const [memo, setMemo] = useState('');
-    const [originalMemo, setOriginalMemo] = useState('');
+    const [memos, setMemos] = useState<Record<number, any[]>>({}); // Map: studentId -> Memo[]
     const [memoSaving, setMemoSaving] = useState(false);
     const [memoSaved, setMemoSaved] = useState(false);
     const [error, setError] = useState('');
@@ -111,37 +110,51 @@ export default function StudentsPage() {
 
             setSessions(sessionsData.sessions || []);
             setLogs(logsData.logs || []);
-            const memoContent = memoData.memos?.[0]?.content || '';
-            setMemo(memoContent);
-            setOriginalMemo(memoContent);
+            setMemos(prev => ({ ...prev, [student.id]: memoData.memos || [] }));
         } catch (e) {
             console.error('Error loading details:', e);
         }
     };
 
-    const saveMemo = async (studentId: number) => {
-        setMemoSaving(true);
+    const saveMemo = async (studentId: number, content: string) => {
+        if (!content.trim()) return;
         try {
             const res = await fetch(`/api/students/${studentId}/memos`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content: memo })
+                body: JSON.stringify({ content })
             });
             const data = await res.json();
             if (data.success) {
-                setOriginalMemo(memo);
-                setMemoSaved(true);
-                // Update local student state to reflect memo existence
-                setStudents(prev => prev.map(s =>
-                    s.id === studentId ? { ...s, has_memo: !!memo } : s
-                ));
-                setTimeout(() => setMemoSaved(false), 3000);
+                setMemos(prev => ({
+                    ...prev,
+                    [studentId]: [data.memo, ...(prev[studentId] || [])]
+                }));
+                // Update has_memo flag visually
+                setStudents(prev => prev.map(s => s.id === studentId ? { ...s, has_memo: true } : s));
             }
         } catch (e) {
             console.error('Memo save error:', e);
-            setError('메모 저장 실패');
-        } finally {
-            setMemoSaving(false);
+        }
+    };
+
+    const handleDeleteMemo = async (studentId: number, memoId: number) => {
+        if (!confirm('메모를 삭제하시겠습니까?')) return;
+        try {
+            const res = await fetch(`/api/students/${studentId}/memos`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ memoId })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setMemos(prev => ({
+                    ...prev,
+                    [studentId]: prev[studentId].filter(m => m.id !== memoId)
+                }));
+            }
+        } catch (e) {
+            console.error('Memo delete error:', e);
         }
     };
 
@@ -371,29 +384,45 @@ export default function StudentsPage() {
                                             </div>
 
                                             {/* 메모 */}
+                                            {/* 메모 (Stacking) */}
                                             <div className="bg-white p-4 rounded-lg border">
                                                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
                                                     <span>📌</span> 특이사항 메모
-                                                    {originalMemo && <span className="text-xs text-emerald-500">(저장됨)</span>}
                                                 </h4>
-                                                <textarea
-                                                    value={memo}
-                                                    onChange={(e) => setMemo(e.target.value)}
-                                                    placeholder="이 수강생에 대한 메모를 입력하세요..."
-                                                    className="w-full text-sm border rounded-lg p-3 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                                                />
-                                                <button
-                                                    onClick={() => saveMemo(student.id)}
-                                                    disabled={memoSaving || memo === originalMemo}
-                                                    className={`mt-2 w-full py-2 rounded-lg text-sm font-medium transition-colors ${memoSaved
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : memo !== originalMemo
-                                                            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                                        }`}
-                                                >
-                                                    {memoSaving ? '저장 중...' : memoSaved ? '✅ 저장 완료!' : memo !== originalMemo ? '💾 메모 저장' : '변경 없음'}
-                                                </button>
+                                                {/* Memo List & Add logic is complex to inline. 
+                                                    Ideally we use the component. 
+                                                    Let's use a simplified read/add view here and tell user to go to detail for full management?
+                                                    "Just stacking memos" - user wants to see them.
+                                                */}
+                                                <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar mb-2">
+                                                    {memos[student.id]?.length > 0 ? (
+                                                        memos[student.id].map((m: any) => (
+                                                            <div key={m.id} className="p-2 bg-yellow-50 rounded border border-yellow-100 text-xs text-gray-700">
+                                                                <div className="flex justify-between text-gray-400 mb-1" style={{ fontSize: '10px' }}>
+                                                                    <span>{format(new Date(m.created_at), 'yy.MM.dd HH:mm')}</span>
+                                                                    {/* Simple delete for quick action */}
+                                                                    <button onClick={() => handleDeleteMemo(student.id, m.id)} className="hover:text-red-500">×</button>
+                                                                </div>
+                                                                <div className="whitespace-pre-wrap">{m.content}</div>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <div className="text-center text-gray-400 text-xs py-4">메모가 없습니다</div>
+                                                    )}
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="메모 입력..."
+                                                        className="flex-1 px-2 py-1.5 text-xs border rounded"
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === 'Enter') {
+                                                                saveMemo(student.id, e.currentTarget.value);
+                                                                e.currentTarget.value = '';
+                                                            }
+                                                        }}
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
