@@ -98,17 +98,25 @@ async function handleNewEnrollment(name: string, phone: string, option: string) 
         await query(`INSERT INTO coach_slots (coach_id, day_of_week, start_time, is_available) VALUES ($1, $2, $3, false)`, [coach.id, parsed.day, parsed.time]);
     }
 
+    // "이번 주에 결제하면 무조건 다음 주 시작" (월요일 시작 기준)
     const getNextWeekDay = (date: Date, dayName: string) => {
         const dayMap: { [key: string]: number } = { '일': 0, '월': 1, '화': 2, '수': 3, '목': 4, '금': 5, '토': 6 };
-        const targetDay = dayMap[dayName.replace('요일', '')];
-        const result = new Date(date);
-        result.setDate(date.getDate() + ((7 + targetDay - date.getDay()) % 7));
+        const targetDay = dayMap[dayName.replace('요일', '')]; // 0(일) ~ 6(토)
 
-        // 만약 시작일이 3일 이내라면 다음주로 미룸 (준비 시간 확보)
-        const diffDays = (result.getTime() - date.getTime()) / (1000 * 60 * 60 * 24);
-        if (diffDays < 3) {
-            result.setDate(result.getDate() + 7);
-        }
+        // ISO 기준 (월=0, ... 일=6)으로 변환
+        const toIso = (d: number) => (d === 0 ? 6 : d - 1);
+
+        const currentIso = toIso(date.getDay());
+        const targetIso = toIso(targetDay);
+
+        // 이번 주 해당 요일 찾기
+        const thisWeekTarget = new Date(date);
+        thisWeekTarget.setDate(date.getDate() - currentIso + targetIso);
+
+        // 무조건 다음 주로 설정 (+7일)
+        const result = new Date(thisWeekTarget);
+        result.setDate(result.getDate() + 7);
+
         return result;
     };
     const today = new Date();
