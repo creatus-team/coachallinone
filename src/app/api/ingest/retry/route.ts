@@ -32,6 +32,13 @@ export async function POST(request: Request) {
     const payload = typeof webhook.payload === 'string' ? JSON.parse(webhook.payload) : webhook.payload;
     const { name, phone, option } = payload;
 
+    // 0. 취소/실패 건 필터링 (강력한 방어)
+    const allValues = Object.values(payload).join(' ');
+    if (allValues.includes('취소') || allValues.includes('실패') || allValues.includes('환불')) {
+        await query(`UPDATE raw_webhooks SET status = 'SKIPPED', error_log = '재처리 시도했으나 취소/실패/환불 건으로 스킵됨' WHERE id = $1`, [rawId]);
+        return NextResponse.json({ success: true, message: '취소/실패 건이라 스킵되었습니다.' });
+    }
+
     // 2. 재처리 시도
     try {
         let isRepayment = false;
@@ -106,8 +113,8 @@ async function handleNewEnrollment(name: string, phone: string, option: string) 
     const userId = userRes.rows[0].id;
 
     await query(`
-        INSERT INTO sessions (user_id, coach_id, day_of_week, start_time, start_date, end_date, status)
-        VALUES ($1, $2, $3, $4, $5, $6, 'upcoming')
+        INSERT INTO sessions (user_id, coach_id, day_of_week, start_time, start_date, end_date)
+        VALUES ($1, $2, $3, $4, $5, $6)
     `, [userId, coach.id, parsed.day, parsed.time, firstSessionDate, sessionEndDate]);
 
     await query(`
@@ -135,7 +142,7 @@ async function handleRepayment(name: string, phone: string, option: string) {
 
     await query(`
         UPDATE sessions 
-        SET end_date = $1, status = 'active', extension_count = COALESCE(extension_count, 0) + 1
+        SET end_date = $1, extension_count = COALESCE(extension_count, 0) + 1
         WHERE id = $2
     `, [newEndDate, lastSession.id]);
 }

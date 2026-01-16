@@ -145,6 +145,9 @@ export default function SyncStatusPage() {
                                             {(log.status === 'NEEDS_ATTENTION' || log.status === 'FAILED') && (
                                                 <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-red-100 text-red-800">⚠️ 확인필요</span>
                                             )}
+                                            {log.status === 'SKIPPED' && (
+                                                <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-gray-100 text-gray-600">🚫 취소/스킵</span>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-red-600 max-w-[200px] truncate" title={log.error_log || ''}>
                                             {log.error_log || '-'}
