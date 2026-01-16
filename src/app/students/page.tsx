@@ -59,6 +59,7 @@ export default function StudentsPage() {
     const [filterStatus, setFilterStatus] = useState('all');
     const [expandedId, setExpandedId] = useState<number | null>(null);
     const [sessions, setSessions] = useState<Session[]>([]);
+    const [logs, setLogs] = useState<any[]>([]);
     const [memo, setMemo] = useState('');
     const [originalMemo, setOriginalMemo] = useState('');
     const [memoSaving, setMemoSaving] = useState(false);
@@ -98,14 +99,18 @@ export default function StudentsPage() {
         setMemoSaved(false);
 
         try {
-            // Fetch sessions and memo
-            const [sessionsRes, memoRes] = await Promise.all([
+            // Fetch sessions and memo and logs
+            const [sessionsRes, memoRes, logsRes] = await Promise.all([
                 fetch(`/api/students/${student.id}/sessions`),
-                fetch(`/api/students/${student.id}/memos`)
+                fetch(`/api/students/${student.id}/memos`),
+                fetch(`/api/students/${student.id}/logs`)
             ]);
             const sessionsData = await sessionsRes.json();
             const memoData = await memoRes.json();
+            const logsData = await logsRes.json();
+
             setSessions(sessionsData.sessions || []);
+            setLogs(logsData.logs || []);
             const memoContent = memoData.memos?.[0]?.content || '';
             setMemo(memoContent);
             setOriginalMemo(memoContent);
@@ -303,9 +308,14 @@ export default function StudentsPage() {
                                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                             {/* 코칭 히스토리 */}
                                             <div className="bg-white p-4 rounded-lg border">
-                                                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                                    <span>📊</span> 코칭 히스토리
-                                                </h4>
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                                                        <span>📊</span> 코칭 히스토리
+                                                    </h4>
+                                                    <a href={`/students/${student.id}`} className="text-xs text-gray-400 hover:text-emerald-600 flex items-center gap-1 transition-colors">
+                                                        상세보기 →
+                                                    </a>
+                                                </div>
                                                 {sessions.length > 0 ? (
                                                     <div className="space-y-2">
                                                         {sessions.map((sess, idx) => (
@@ -330,6 +340,36 @@ export default function StudentsPage() {
                                                 ) : <div className="text-sm text-gray-400 py-4 text-center">코칭 기록 없음</div>}
                                             </div>
 
+                                            {/* 활동 로그 (NEW) */}
+                                            <div className="bg-white p-4 rounded-lg border">
+                                                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                                    <span>📝</span> 활동 로그
+                                                </h4>
+                                                {logs.length > 0 ? (
+                                                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                                        {logs.slice(0, 5).map((log, idx) => (
+                                                            <div key={log.id} className="flex items-center gap-2 text-xs p-1.5 hover:bg-gray-50 rounded">
+                                                                <span className="text-gray-400 font-mono w-16">
+                                                                    {format(new Date(log.created_at), 'MM.dd HH:mm')}
+                                                                </span>
+                                                                <span className={`px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${log.action_type === 'ENROLL' ? 'bg-indigo-50 text-indigo-700' :
+                                                                    log.action_type === 'RENEWAL' ? 'bg-pink-50 text-pink-700' :
+                                                                        log.action_type === 'CANCEL' ? 'bg-red-50 text-red-700' :
+                                                                            'bg-gray-100 text-gray-600'
+                                                                    }`}>
+                                                                    {log.action_type === 'ENROLL' ? '신규' :
+                                                                        log.action_type === 'RENEWAL' ? '연장' :
+                                                                            log.action_type === 'CANCEL' ? '취소' : log.action_type}
+                                                                </span>
+                                                                <span className="text-gray-600 truncate flex-1" title={log.reason || log.new_value}>
+                                                                    {log.reason || log.new_value}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : <div className="text-sm text-gray-400 py-4 text-center">로그 없음</div>}
+                                            </div>
+
                                             {/* 메모 */}
                                             <div className="bg-white p-4 rounded-lg border">
                                                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
@@ -346,10 +386,10 @@ export default function StudentsPage() {
                                                     onClick={() => saveMemo(student.id)}
                                                     disabled={memoSaving || memo === originalMemo}
                                                     className={`mt-2 w-full py-2 rounded-lg text-sm font-medium transition-colors ${memoSaved
-                                                            ? 'bg-emerald-100 text-emerald-700'
-                                                            : memo !== originalMemo
-                                                                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                                                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : memo !== originalMemo
+                                                            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+                                                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                                         }`}
                                                 >
                                                     {memoSaving ? '저장 중...' : memoSaved ? '✅ 저장 완료!' : memo !== originalMemo ? '💾 메모 저장' : '변경 없음'}
