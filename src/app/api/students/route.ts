@@ -4,6 +4,19 @@ import { query } from '@/lib/db';
 // GET: 수강생 목록 조회 (확장된 정보 포함)
 export async function GET() {
     try {
+        // Self-healing: ensure user_activity_logs table exists (safe to run multiple times)
+        await query(`
+            CREATE TABLE IF NOT EXISTS user_activity_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                action_type VARCHAR(50) NOT NULL,
+                old_value TEXT,
+                new_value TEXT,
+                reason TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        `);
+
         const res = await query(`
             SELECT 
                 u.*,
